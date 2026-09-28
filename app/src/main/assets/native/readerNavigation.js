@@ -1,12 +1,17 @@
 /**
- * Jellyfin Reader - Native BookPlayer Gesture & Zone Engine
- * Hooks directly into BookPlayer.prototype.addSwipeGestures inside iframe chapters.
- * Completely replaces TouchHelper (no more 30px limit).
+ * Jellyfin Reader - Hardened Native Gesture & Zone Engine
+ * Includes all 6 safety layers:
+ * 1. Safe timeout for suppressClick (prevents hanging clicks)
+ * 2. Footnote / link passthrough (preserves internal links)
+ * 3. Text selection guard (long-press won't flip pages)
+ * 4. OSD visibility guard (tapping closes OSD without flipping pages underneath)
+ * 5. Dynamic screen width on rotation
+ * 6. Continuous chapter re-hooking
  */
 (() => {
     'use strict';
 
-    console.log('[JellyfinReader] Initializing BookPlayer Chapter Gesture Hook...');
+    console.log('[JellyfinReader] Initializing Hardened Reader Engine...');
 
     const STORAGE_KEY = 'jellyfin_reader_nav_mode'; // 'tap' or 'gesture'
     let currentMode = localStorage.getItem(STORAGE_KEY) || 'gesture';
@@ -33,6 +38,12 @@
         }, 1800);
     }
 
+    function isOsdVisible() {
+        const row = document.querySelector('.bookOsdRow');
+        if (!row) return false;
+        return row.style.opacity !== '0';
+    }
+
     function safeNext(player) {
         const now = Date.now();
         if (now - lastTurnTime < COOLDOWN_MS) return;
@@ -51,22 +62,39 @@
         }
     }
 
-    function toggleOsd() {
-        document.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    }
-
-    // Attach touch handler to the chapter root inside the iframe
+    // Attach touch & click handler to the chapter root inside the iframe
     function attachChapterTouch(element, player) {
         if (!element || element._readerTouchAttached) return;
         element._readerTouchAttached = true;
 
-        console.log('[JellyfinReader] Attaching custom touch & zone handler to chapter DOM');
+        console.log('[JellyfinReader] Attaching hardened touch handler to chapter DOM');
 
         let startX = 0;
         let startY = 0;
         let startTime = 0;
+        let suppressClick = false;
+        let suppressClickTimer = null;
+
+        // Capture phase click interceptor inside chapter iframe
+        element.addEventListener('click', (e) => {
+            if (suppressClick) {
+                suppressClick = false;
+                clearTimeout(suppressClickTimer);
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                e.preventDefault();
+            }
+        }, true);
 
         element.addEventListener('touchstart', (e) => {
+            suppressClick = false;
+            clearTimeout(suppressClickTimer);
+
+            // Safeguard 2: Ignore touches on links, footnotes, buttons
+            if (e.target && e.target.closest('a, button, [role="button"], input, select')) {
+                return;
+            }
+
             if (!e.touches || e.touches.length !== 1) return;
             const touch = e.touches[0];
             startX = touch.clientX;
@@ -75,6 +103,17 @@
         }, { passive: true });
 
         element.addEventListener('touchend', (e) => {
+            // Safeguard 2: Ignore touches on links/buttons
+            if (e.target && e.target.closest('a, button, [role="button"], input, select')) {
+                return;
+            }
+
+            // Safeguard 3: Long press / text selection guard
+            const selection = element.ownerDocument?.getSelection()?.toString();
+            if (selection && selection.trim().length > 0) {
+                return;
+            }
+
             if (!e.changedTouches || e.changedTouches.length === 0) return;
             const touch = e.changedTouches[0];
             const deltaX = touch.clientX - startX;
@@ -84,12 +123,21 @@
             const absX = Math.abs(deltaX);
             const absY = Math.abs(deltaY);
 
+            // Safeguard 4: If OSD is currently visible, tapping closes OSD without flipping pages
+            if (isOsdVisible()) {
+                suppressClick = false;
+                return;
+            }
+
             const activeMode = localStorage.getItem(STORAGE_KEY) || 'gesture';
 
             // 1. SWIPE DETECTION:
             // Tolerant swipe (min 35px horizontal, angle up to ~65 degrees)
             const isSwipe = absX >= 35 && absX > absY * 0.45 && deltaTime < 650;
             if (isSwipe) {
+                suppressClick = true;
+                suppressClickTimer = setTimeout(() => { suppressClick = false; }, 350);
+
                 if (deltaX < 0) {
                     safeNext(player);
                 } else {
@@ -99,22 +147,31 @@
             }
 
             // 2. TAP DETECTION:
-            const isTap = deltaTime < 350 && absX < 20 && absY < 20;
+            const isTap = deltaTime < 300 && absX < 20 && absY < 20;
             if (isTap) {
                 if (activeMode === 'tap') {
-                    const width = element.clientWidth || window.innerWidth;
+                    // Safeguard 6: Dynamic screen width for rotation support
+                    const win = element.ownerDocument?.defaultView || window;
+                    const width = win.innerWidth || element.clientWidth;
                     const ratio = touch.clientX / width;
 
                     if (ratio < 0.33) {
+                        // Left zone: Prev page (suppress OSD toggle click)
+                        suppressClick = true;
+                        suppressClickTimer = setTimeout(() => { suppressClick = false; }, 350);
                         safePrev(player);
                     } else if (ratio > 0.67) {
+                        // Right zone: Next page (suppress OSD toggle click)
+                        suppressClick = true;
+                        suppressClickTimer = setTimeout(() => { suppressClick = false; }, 350);
                         safeNext(player);
                     } else {
-                        toggleOsd();
+                        // Center zone: let natural click pass through to toggle OSD!
+                        suppressClick = false;
                     }
                 } else {
-                    // In gesture mode, tapping outside controls toggles the OSD
-                    toggleOsd();
+                    // Gesture mode: any tap outside controls lets natural click pass to toggle OSD!
+                    suppressClick = false;
                 }
             }
         }, { passive: true });
@@ -154,7 +211,7 @@
         });
     }
 
-    // Continuously check for BookPlayer and active iframes
+    // Continuously check for BookPlayer and active iframes (Safeguard 5: Chapter re-hooking)
     function scanAndHook() {
         const pm = window.NavigationHelper?.playbackManager || window.playbackManager;
         if (pm) {
@@ -249,5 +306,5 @@
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    console.log('[JellyfinReader] BookPlayer Chapter Gesture Hook ready.');
+    console.log('[JellyfinReader] Hardened Reader Engine ready.');
 })();
