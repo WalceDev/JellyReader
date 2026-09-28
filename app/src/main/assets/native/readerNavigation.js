@@ -147,13 +147,13 @@
             }
 
             // 2. TAP DETECTION:
-            const isTap = deltaTime < 300 && absX < 20 && absY < 20;
+            const isTap = deltaTime < 350 && absX < 35 && absY < 35;
             if (isTap) {
                 if (activeMode === 'tap') {
-                    // Safeguard 6: Dynamic screen width for rotation support
-                    const win = element.ownerDocument?.defaultView || window;
-                    const width = win.innerWidth || element.clientWidth;
-                    const ratio = touch.clientX / width;
+                    // Calculate ratio using physical screen coordinates (immune to iframe columns / scroll)
+                    const screenWidth = window.top.innerWidth || window.innerWidth || window.screen.width;
+                    const touchX = (typeof touch.screenX === 'number' && touch.screenX > 0) ? touch.screenX : touch.clientX;
+                    const ratio = touchX / screenWidth;
 
                     if (ratio < 0.33) {
                         // Left zone: Prev page (suppress OSD toggle click)
