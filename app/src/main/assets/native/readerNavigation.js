@@ -1,6 +1,6 @@
 /**
  * Jellyfin Reader - Enhanced Navigation & Touch Handler
- * Adds improved gesture detection, tap-to-turn mode, and an OSD toggle button.
+ * Safe integration with BookOsd and epub.js.
  */
 (() => {
     'use strict';
@@ -11,10 +11,9 @@
     let currentMode = localStorage.getItem(STORAGE_KEY) || 'gesture';
 
     // SVG Icons
-    const ICON_TAP = `<svg viewBox="0 0 24 24" style="width:24px;height:24px;fill:currentColor;"><path d="M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74a4.5 4.5 0 0 0-9 0c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26a1.53 1.53 0 0 0-.66-.15H13v-6a1.5 1.5 0 0 0-3 0v9.58l-3.37-.71a1.49 1.49 0 0 0-1.42.41l-.88.89 4.96 4.96c.38.38.89.59 1.42.59h6.45c1.01 0 1.87-.75 1.98-1.75l.54-4.83a2 2 0 0 0-.84-1.73z"/></svg>`;
-    const ICON_GESTURE = `<svg viewBox="0 0 24 24" style="width:24px;height:24px;fill:currentColor;"><path d="M10 9h4V6h3l-5-5-5 5h3v3zm-1 1H6V7l-5 5 5 5v-3h3v-4zm14 2l-5-5v3h-3v4h3v3l5-5zm-9 3h-4v3H7l5 5 5-5h-3v-3z"/></svg>`;
+    const ICON_TAP = `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:currentColor;"><path d="M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74a4.5 4.5 0 0 0-9 0c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26a1.53 1.53 0 0 0-.66-.15H13v-6a1.5 1.5 0 0 0-3 0v9.58l-3.37-.71a1.49 1.49 0 0 0-1.42.41l-.88.89 4.96 4.96c.38.38.89.59 1.42.59h6.45c1.01 0 1.87-.75 1.98-1.75l.54-4.83a2 2 0 0 0-.84-1.73z"/></svg>`;
+    const ICON_GESTURE = `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:currentColor;"><path d="M10 9h4V6h3l-5-5-5 5h3v3zm-1 1H6V7l-5 5 5 5v-3h3v-4zm14 2l-5-5v3h-3v4h3v3l5-5zm-9 3h-4v3H7l5 5 5-5h-3v-3z"/></svg>`;
 
-    // Display temporary toast message
     function showToast(message) {
         let toast = document.getElementById('jellyfin-reader-toast');
         if (!toast) {
@@ -31,39 +30,31 @@
         }, 1800);
     }
 
-    // Page navigation helpers
-    function findPrevButton() {
-        return document.querySelector('button.btnPreviousPage, button[data-action="previous"], button.previousPageButton, button[title*="Previous" i], button[aria-label*="Previous" i], .bookPlayerView button:first-of-type');
-    }
-
-    function findNextButton() {
-        return document.querySelector('button.btnNextPage, button[data-action="next"], button.nextPageButton, button[title*="Next" i], button[aria-label*="Next" i]');
-    }
-
+    // Navigation triggers
     function triggerPrevPage() {
-        const btn = findPrevButton();
-        if (btn) {
-            btn.click();
+        const bottomRow = document.querySelector('.bookOsd .bookOsdRow:last-child') || document.querySelector('.bookOsdRow:last-child');
+        const prevBtn = bottomRow ? bottomRow.querySelector('button') : null;
+        if (prevBtn) {
+            prevBtn.click();
             return;
         }
         dispatchKey('ArrowLeft', 37);
     }
 
     function triggerNextPage() {
-        const btn = findNextButton();
-        if (btn) {
-            btn.click();
+        const bottomRow = document.querySelector('.bookOsd .bookOsdRow:last-child') || document.querySelector('.bookOsdRow:last-child');
+        const buttons = bottomRow ? bottomRow.querySelectorAll('button') : [];
+        if (buttons.length >= 2) {
+            buttons[1].click();
             return;
         }
         dispatchKey('ArrowRight', 39);
     }
 
     function toggleOsd() {
-        // Dispatch click to center of screen to toggle OSD naturally
-        const centerEl = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
-        if (centerEl && !centerEl.closest('button, a, input, select')) {
-            centerEl.click();
-        }
+        // Trigger click outside bookOsdRow to toggle OSD visibility
+        const container = document.querySelector('#bookPlayerContainer') || document.body;
+        container.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }
 
     function dispatchKey(key, keyCode) {
@@ -77,7 +68,6 @@
         document.dispatchEvent(ev);
         window.dispatchEvent(ev);
 
-        // Also dispatch into all iframes
         const iframes = document.querySelectorAll('iframe');
         iframes.forEach(f => {
             try {
@@ -86,60 +76,36 @@
         });
     }
 
-    // Attach OSD button to bottom bar
+    // Inject toggle button into .bookOsdRow next to .bookOsdSpacer
     function ensureOsdButton() {
         if (document.getElementById('btnToggleReaderMode')) return;
 
-        // Find the right group of buttons in the reader bottom bar
-        const candidateBars = document.querySelectorAll('.bookPlayerView, [class*="bookPlayer"], [class*="BookOsd"], [class*="bookOsd"]');
-        let targetContainer = null;
+        const spacer = document.querySelector('.bookOsd .bookOsdSpacer, .bookOsdRow .bookOsdSpacer');
+        if (!spacer || !spacer.parentNode) return;
 
-        for (const bar of candidateBars) {
-            // Find container having font size buttons or fullscreen button
-            const buttons = bar.querySelectorAll('button');
-            for (const btn of buttons) {
-                const text = (btn.textContent || '').trim();
-                const title = (btn.getAttribute('title') || '').toLowerCase();
-                if (text === 'A-' || text === 'A+' || title.includes('fullscreen') || title.includes('view') || title.includes('contents')) {
-                    targetContainer = btn.parentElement;
-                    break;
-                }
-            }
-            if (targetContainer) break;
-        }
+        const toggleBtn = document.createElement('button');
+        toggleBtn.id = 'btnToggleReaderMode';
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'paper-icon-button-light emby-button reader-mode-toggle-btn';
 
-        // Fallback: look for any flex container containing reader buttons
-        if (!targetContainer) {
-            const allButtons = document.querySelectorAll('button');
-            for (const btn of allButtons) {
-                const text = (btn.textContent || '').trim();
-                if (text === 'A+' || text === 'A-') {
-                    targetContainer = btn.parentElement;
-                    break;
-                }
-            }
-        }
+        updateButtonAppearance(toggleBtn);
 
-        if (targetContainer) {
-            const toggleBtn = document.createElement('button');
-            toggleBtn.id = 'btnToggleReaderMode';
-            toggleBtn.type = 'button';
-            toggleBtn.className = 'paper-icon-button-light emby-button reader-mode-toggle-btn';
-            
+        toggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            currentMode = currentMode === 'gesture' ? 'tap' : 'gesture';
+            localStorage.setItem(STORAGE_KEY, currentMode);
             updateButtonAppearance(toggleBtn);
+            showToast(currentMode === 'tap' ? 'Tryb: Tapnięcia (Lewo / Prawo)' : 'Tryb: Gesty (Przesuwanie stron)');
+        });
 
-            toggleBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                currentMode = currentMode === 'gesture' ? 'tap' : 'gesture';
-                localStorage.setItem(STORAGE_KEY, currentMode);
-                updateButtonAppearance(toggleBtn);
-                showToast(currentMode === 'tap' ? 'Włączono tryb tapnięć (Lewo / Prawo)' : 'Włączono ulepszony tryb gestów');
-            });
-
-            // Insert at the beginning of the right buttons group
-            targetContainer.insertBefore(toggleBtn, targetContainer.firstChild);
-            console.log('[JellyfinReader] Mode toggle button injected successfully.');
+        // Insert right after the spacer (first item on the right tools section)
+        if (spacer.nextSibling) {
+            spacer.parentNode.insertBefore(toggleBtn, spacer.nextSibling);
+        } else {
+            spacer.parentNode.appendChild(toggleBtn);
         }
+
+        console.log('[JellyfinReader] Mode toggle button inserted successfully next to spacer.');
     }
 
     function updateButtonAppearance(btn) {
@@ -174,9 +140,9 @@
         const deltaY = endY - startY;
         const deltaTime = Date.now() - startTime;
 
-        // Ignore touches on UI controls, buttons, forms, sliders
+        // Ignore touches on UI controls, buttons, forms, sliders, OSD rows
         const target = e.target;
-        if (target && target.closest('button, a, input, select, [role="button"], .osdControls, [class*="bottomBar"], [class*="header"]')) {
+        if (target && target.closest('button, a, input, select, [role="button"], .bookOsdRow, .osdControls')) {
             return;
         }
 
@@ -184,7 +150,7 @@
         const absY = Math.abs(deltaY);
 
         if (currentMode === 'tap') {
-            // Tap mode: check for short tap without much movement
+            // Tap mode: short tap with minimal movement
             if (deltaTime < 300 && absX < 25 && absY < 25) {
                 const screenWidth = window.innerWidth;
                 const ratio = startX / screenWidth;
@@ -206,7 +172,7 @@
             }
         } else {
             // Enhanced Gesture mode: tolerant angle swipe
-            if (absX >= 35 && absX > absY * 0.6 && deltaTime < 550) {
+            if (absX >= 35 && absX > absY * 0.55 && deltaTime < 550) {
                 if (deltaX < 0) {
                     triggerNextPage();
                 } else {
@@ -216,20 +182,16 @@
         }
     }
 
-    // Attach listeners to document & iframes
-    function attachTouchListeners(doc) {
-        if (!doc || doc._hasReaderTouch) return;
-        doc._hasReaderTouch = true;
+    function attachTouchListeners(target) {
+        if (!target || target._hasReaderTouch) return;
+        target._hasReaderTouch = true;
 
-        doc.addEventListener('touchstart', handleTouchStart, { passive: true });
-        doc.addEventListener('touchend', handleTouchEnd, { passive: true });
+        target.addEventListener('touchstart', handleTouchStart, { passive: true });
+        target.addEventListener('touchend', handleTouchEnd, { passive: true });
     }
 
-    // Monitor for iframes and OSD bottom bar
-    const observer = new MutationObserver(() => {
-        ensureOsdButton();
-
-        // Check for newly added iframes (epub.js)
+    // Attach listeners without overriding ANY onload properties!
+    function scanAndAttachIframes() {
         const iframes = document.querySelectorAll('iframe');
         iframes.forEach(iframe => {
             try {
@@ -237,25 +199,34 @@
                     attachTouchListeners(iframe.contentDocument);
                 }
             } catch (err) {}
-            iframe.onload = () => {
+            // Use addEventListener, NEVER assign to onload
+            iframe.addEventListener('load', () => {
                 try {
                     if (iframe.contentDocument) {
                         attachTouchListeners(iframe.contentDocument);
                     }
                 } catch (err) {}
-            };
+            }, { passive: true });
         });
+    }
+
+    const observer = new MutationObserver(() => {
+        ensureOsdButton();
+        scanAndAttachIframes();
     });
 
+    attachTouchListeners(window);
     attachTouchListeners(document);
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             ensureOsdButton();
+            scanAndAttachIframes();
             observer.observe(document.body, { childList: true, subtree: true });
         });
     } else {
         ensureOsdButton();
+        scanAndAttachIframes();
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
