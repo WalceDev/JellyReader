@@ -1,0 +1,31 @@
+/**
+ * Jellyfin Reader - Custom CSS for Books Focus
+ */
+
+/* Hide non-book menu entries in drawer */
+.navMenuOption[data-itemtype="movies"],
+.navMenuOption[data-itemtype="tvshows"],
+.navMenuOption[data-itemtype="music"],
+.navMenuOption[data-itemtype="livetv"],
+.navMenuOption[data-itemtype="photos"] {
+    display: none !important;
+}
+
+/* Hide remote control and cast buttons since this is a dedicated book reader */
+.btnCast,
+.btnRemoteControl,
+.headerCastButton,
+.headerSyncButton {
+    display: none !important;
+}
+
+/* Make book cards and covers look neat and prominent */
+.cardBox {
+    transition: transform 0.15s ease-in-out;
+}
+
+/* Reader full-screen and clean margins */
+.bookPlayerView {
+    user-select: none;
+    -webkit-user-select: none;
+}

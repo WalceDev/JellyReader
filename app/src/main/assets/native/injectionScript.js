@@ -1,5 +1,14 @@
 (() => {
+    // Inject Reader CSS
+    const linkElement = document.createElement('link');
+    linkElement.rel = 'stylesheet';
+    linkElement.type = 'text/css';
+    linkElement.href = '/native/reader.css';
+    (document.head || document.documentElement).appendChild(linkElement);
+
+    // Inject Scripts
     const scripts = [
+        '/native/booksOnly.js',
         '/native/nativeshell.js',
         '/native/EventEmitter.js',
         document.currentScript.src.concat('?deferred=true&ts=', Date.now())
