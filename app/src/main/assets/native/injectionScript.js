@@ -9,6 +9,7 @@
     // Inject Scripts
     const scripts = [
         '/native/booksOnly.js',
+        '/native/readerNavigation.js',
         '/native/nativeshell.js',
         '/native/EventEmitter.js',
         document.currentScript.src.concat('?deferred=true&ts=', Date.now())

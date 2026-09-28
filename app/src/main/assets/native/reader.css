@@ -1,5 +1,5 @@
 /**
- * Jellyfin Reader - Custom CSS for Books Focus
+ * Jellyfin Reader - Custom CSS for Books Focus and Reader Navigation
  */
 
 /* Hide non-book menu entries in drawer */
@@ -11,7 +11,7 @@
     display: none !important;
 }
 
-/* Hide remote control and cast buttons since this is a dedicated book reader */
+/* Hide remote control and cast buttons */
 .btnCast,
 .btnRemoteControl,
 .headerCastButton,
@@ -19,7 +19,7 @@
     display: none !important;
 }
 
-/* Make book cards and covers look neat and prominent */
+/* Make book cards and covers look neat */
 .cardBox {
     transition: transform 0.15s ease-in-out;
 }
@@ -28,4 +28,56 @@
 .bookPlayerView {
     user-select: none;
     -webkit-user-select: none;
+}
+
+/* Reader OSD Mode Toggle Button */
+.reader-mode-toggle-btn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 50%;
+    margin: 0 4px;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.reader-mode-toggle-btn:hover,
+.reader-mode-toggle-btn:focus {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+.reader-mode-toggle-btn:active {
+    transform: scale(0.92);
+}
+
+/* Reader Toast Notification */
+.reader-toast {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(20, 20, 20, 0.92);
+    color: #ffffff;
+    padding: 10px 20px;
+    border-radius: 24px;
+    font-size: 14px;
+    font-family: inherit;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    z-index: 999999;
+    text-align: center;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.reader-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
 }
