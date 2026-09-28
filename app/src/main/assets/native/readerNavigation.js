@@ -223,6 +223,128 @@
         });
     }
 
+    // Cache keys
+    const LOC_CACHE_PREFIX = 'jellyfin_book_locs_';
+
+    function getBookId(player) {
+        return player?.currentItem?.Id ||
+               player?.currentItem?.Name ||
+               player?.book?.packaging?.metadata?.title ||
+               player?.book?.key?.() ||
+               'current_book';
+    }
+
+    function loadCachedLocations(player) {
+        if (!player?.book?.locations) return false;
+        const bookId = getBookId(player);
+        try {
+            const cached = localStorage.getItem(LOC_CACHE_PREFIX + bookId);
+            if (cached) {
+                player.book.locations.load(cached);
+                console.log('[JellyfinReader] Loaded locations from cache. Total:', player.book.locations.total);
+                return typeof player.book.locations.total === 'number' && player.book.locations.total > 0;
+            }
+        } catch (e) {
+            console.warn('[JellyfinReader] Failed to load cached locations:', e);
+        }
+        return false;
+    }
+
+    function saveCachedLocations(player) {
+        if (!player?.book?.locations || !player.book.locations.total) return;
+        const bookId = getBookId(player);
+        try {
+            const serialized = player.book.locations.save();
+            localStorage.setItem(LOC_CACHE_PREFIX + bookId, serialized);
+            console.log('[JellyfinReader] Saved locations to cache for:', bookId, 'Total:', player.book.locations.total);
+        } catch (e) {
+            console.warn('[JellyfinReader] Failed to save locations to cache:', e);
+        }
+    }
+
+    function triggerLocationsGeneration(player) {
+        if (!player?.book?.locations) return;
+        if (player.book.locations.total && player.book.locations.total > 0) return;
+        if (player.book._generatingLocations) return;
+
+        // Try cache first
+        if (loadCachedLocations(player)) {
+            updateCounterDisplay();
+            return;
+        }
+
+        player.book._generatingLocations = true;
+        console.log('[JellyfinReader] Generating exact full-book locations...');
+
+        const spinePromise = player.book.loaded?.spine || player.book.opened || Promise.resolve();
+
+        spinePromise.then(() => {
+            return player.book.locations.generate(1024);
+        }).then(() => {
+            console.log('[JellyfinReader] Full-book locations generated! Total:', player.book.locations.total);
+            saveCachedLocations(player);
+            updateCounterDisplay();
+        }).catch((err) => {
+            console.warn('[JellyfinReader] Error generating locations:', err);
+        }).finally(() => {
+            player.book._generatingLocations = false;
+        });
+    }
+
+    // Measure exact screen dimensions and scroll position in active chapter iframe
+    function getChapterScreenInfo() {
+        const iframe = document.querySelector('#bookPlayer iframe, #bookPlayerContainer iframe, .epub-container iframe');
+        if (!iframe || !iframe.contentDocument) return null;
+
+        try {
+            const doc = iframe.contentDocument;
+            const win = doc.defaultView || iframe.contentWindow;
+            if (!win) return null;
+
+            const clientWidth = win.innerWidth || doc.documentElement.clientWidth || iframe.clientWidth;
+            if (!clientWidth || clientWidth <= 0) return null;
+
+            let offset = win.pageXOffset || doc.documentElement.scrollLeft || doc.body.scrollLeft || 0;
+
+            if (offset === 0) {
+                const transform = doc.documentElement.style.transform || doc.body.style.transform || iframe.style.transform;
+                if (transform) {
+                    const match = transform.match(/translate(?:3d)?\(\s*(-?\d+(?:\.\d+)?)(?:px)?/);
+                    if (match) {
+                        offset = Math.abs(parseFloat(match[1]));
+                    }
+                }
+            }
+            if (offset === 0 && iframe.parentElement) {
+                const parentTransform = iframe.parentElement.style.transform;
+                if (parentTransform) {
+                    const match = parentTransform.match(/translate(?:3d)?\(\s*(-?\d+(?:\.\d+)?)(?:px)?/);
+                    if (match) {
+                        offset = Math.abs(parseFloat(match[1]));
+                    }
+                }
+            }
+
+            const totalWidth = Math.max(
+                doc.documentElement.scrollWidth || 0,
+                doc.body.scrollWidth || 0,
+                clientWidth
+            );
+
+            const totalScreens = Math.max(1, Math.round(totalWidth / clientWidth));
+            const currentScreen = Math.min(totalScreens, Math.max(1, Math.round(offset / clientWidth) + 1));
+
+            return {
+                currentScreen,
+                totalScreens,
+                clientWidth,
+                totalWidth
+            };
+        } catch (err) {
+            return null;
+        }
+    }
+
     // Hook rendition events and book locations for the page counter
     function hookRenditionAndBook(player) {
         if (!player) return;
@@ -257,22 +379,7 @@
             } catch (e) {}
         }
 
-        // Generate canonical book locations if not available
-        if (player.book && player.book.locations) {
-            const total = player.book.locations.total;
-            if ((!total || total === 0) && !player.book._generatingLocations) {
-                player.book._generatingLocations = true;
-                const readyPromise = player.book.ready ? player.book.ready : Promise.resolve();
-                readyPromise.then(() => {
-                    return player.book.locations.generate(1024);
-                }).then(() => {
-                    console.log('[JellyfinReader] Book locations generated:', player.book.locations.total);
-                    updateCounterDisplay();
-                }).catch((err) => {
-                    console.warn('[JellyfinReader] Error generating locations:', err);
-                });
-            }
-        }
+        triggerLocationsGeneration(player);
     }
 
     function onRenditionRelocated(player, location) {
@@ -292,30 +399,90 @@
         const counterEl = document.getElementById('btnReaderPageCounter');
         if (!counterEl) return;
 
-        if (!lastLocationData || !lastLocationData.start) {
-            counterEl.textContent = '--';
+        const player = activeBookPlayer;
+        const book = player?.book;
+        const loc = lastLocationData;
+        const start = loc?.start;
+
+        // Default initial value: 0 / 0 or 0%
+        if (!start) {
+            counterEl.textContent = (currentCounterMode === 'percent') ? '0%' : '0 / 0';
             return;
         }
 
-        const loc = lastLocationData;
-        const start = loc.start;
-        const player = activeBookPlayer;
-        const book = player?.book;
-        const chapIndex = start.index !== undefined ? start.index : 0;
-        const displayed = start.displayed;
+        const hasLocations = book?.locations && typeof book.locations.total === 'number' && book.locations.total > 0;
         const totalChapters = book?.spine?.items?.length || 1;
+        const chapIndex = start.index !== undefined ? start.index : 0;
+
+        if (currentCounterMode === 'percent') {
+            // Mode 3: Percentage (X% or X.X%)
+            let pct = null;
+            if (hasLocations && typeof book.locations.percentageFromCfi === 'function') {
+                pct = book.locations.percentageFromCfi(start.cfi);
+            }
+            if (pct === null && start.percentage !== undefined) {
+                pct = start.percentage;
+            }
+
+            if (pct !== null && typeof pct === 'number' && !isNaN(pct)) {
+                const pctVal = (Math.max(0, Math.min(1, pct)) * 100).toFixed(1);
+                counterEl.textContent = `${pctVal}%`;
+                counterEl.title = `Postęp: ${pctVal}%. Kliknij, aby zmienić tryb.`;
+            } else {
+                counterEl.textContent = '0%';
+                counterEl.title = 'Postęp: 0%. Kliknij, aby zmienić tryb.';
+            }
+            return;
+        }
+
+        if (currentCounterMode === 'absolute') {
+            // Mode 2: Absolute canonical pages (X / Y)
+            if (hasLocations) {
+                const currLoc = start.location !== undefined ? (start.location + 1) : null;
+                const totalLoc = book.locations.total;
+                if (currLoc !== null && totalLoc > 0) {
+                    counterEl.textContent = `${currLoc} / ${totalLoc}`;
+                    counterEl.title = `Strona ${currLoc} z ${totalLoc} (znormalizowana). Kliknij, aby zmienić tryb.`;
+                    return;
+                }
+            } else if (book?.pageList && book.pageList.length > 0) {
+                const page = typeof book.locations?.pageFromCfi === 'function' ? book.locations.pageFromCfi(start.cfi) : null;
+                if (page) {
+                    counterEl.textContent = `${page} / ${book.pageList.length}`;
+                    counterEl.title = `Strona ${page} z ${book.pageList.length} (wydanie drukowane). Kliknij, aby zmienić tryb.`;
+                    return;
+                }
+            }
+
+            counterEl.textContent = '0 / 0';
+            counterEl.title = 'Przeliczanie stron... Kliknij, aby zmienić tryb.';
+            return;
+        }
 
         if (currentCounterMode === 'relative') {
-            // Mode 1: Relative screens across entire book
-            if (displayed && displayed.page && displayed.total) {
-                const currChapPage = displayed.page;
-                const currChapTotal = displayed.total;
-                chapterScreensCache[chapIndex] = currChapTotal;
+            // Mode 1: Relative screens for the entire book (X / Y)
+            const screenInfo = getChapterScreenInfo();
 
+            let chapPage = 1;
+            let chapTotal = 1;
+
+            if (screenInfo && screenInfo.totalScreens > 0) {
+                chapPage = screenInfo.currentScreen;
+                chapTotal = screenInfo.totalScreens;
+            } else if (start.displayed && start.displayed.total > 0) {
+                chapPage = start.displayed.page || 1;
+                chapTotal = start.displayed.total;
+            }
+
+            if (chapTotal > 0) {
+                chapterScreensCache[chapIndex] = chapTotal;
+            }
+
+            if (hasLocations) {
                 const visitedIndices = Object.keys(chapterScreensCache);
                 const avgScreens = visitedIndices.length > 0
                     ? (visitedIndices.reduce((sum, idx) => sum + chapterScreensCache[idx], 0) / visitedIndices.length)
-                    : currChapTotal;
+                    : chapTotal;
 
                 let screensBefore = 0;
                 let totalEstimated = 0;
@@ -329,59 +496,17 @@
                     totalEstimated += s;
                 }
 
-                const currentScreen = Math.min(totalEstimated, screensBefore + currChapPage);
-                counterEl.textContent = `ekr. ${currentScreen} / ${totalEstimated}`;
-                counterEl.title = `Ekran ${currentScreen} z ${totalEstimated} (względne dla urządzenia). Kliknij, aby zmienić tryb.`;
+                const currentScreen = Math.min(totalEstimated, screensBefore + chapPage);
+                counterEl.textContent = `${currentScreen} / ${totalEstimated}`;
+                counterEl.title = `Ekran ${currentScreen} z ${totalEstimated} (urządzenie, cała książka). Kliknij, aby zmienić tryb.`;
             } else {
-                counterEl.textContent = 'ekr. ...';
-                counterEl.title = 'Obliczanie ekranów... Kliknij, aby zmienić tryb.';
-            }
-        } else if (currentCounterMode === 'absolute') {
-            // Mode 2: Absolute canonical pages
-            const hasLocations = book?.locations && typeof book.locations.total === 'number' && book.locations.total > 0;
-            if (hasLocations) {
-                const currLoc = start.location !== undefined ? (start.location + 1) : null;
-                const totalLoc = book.locations.total;
-                if (currLoc !== null && totalLoc > 0) {
-                    counterEl.textContent = `str. ${currLoc} / ${totalLoc}`;
-                    counterEl.title = `Strona ${currLoc} z ${totalLoc} (bezwzględne / znormalizowane). Kliknij, aby zmienić tryb.`;
+                if (chapTotal > 1) {
+                    counterEl.textContent = `${chapPage} / ${chapTotal}`;
+                    counterEl.title = `Ekran ${chapPage} z ${chapTotal} w rozdziale. Kliknij, aby zmienić tryb.`;
                 } else {
-                    counterEl.textContent = `str. ... / ${totalLoc}`;
-                    counterEl.title = 'Strony bezwzględne. Kliknij, aby zmienić tryb.';
+                    counterEl.textContent = '0 / 0';
+                    counterEl.title = 'Przeliczanie ekranów... Kliknij, aby zmienić tryb.';
                 }
-            } else if (book?.pageList && book.pageList.length > 0) {
-                const page = typeof book.locations?.pageFromCfi === 'function' ? book.locations.pageFromCfi(start.cfi) : null;
-                if (page) {
-                    counterEl.textContent = `str. ${page} / ${book.pageList.length}`;
-                } else {
-                    counterEl.textContent = `str. ... / ${book.pageList.length}`;
-                }
-                counterEl.title = 'Strony wydania drukowanego. Kliknij, aby zmienić tryb.';
-            } else {
-                counterEl.textContent = 'str. ...';
-                counterEl.title = 'Indeksowanie stron... Kliknij, aby zmienić tryb.';
-            }
-        } else if (currentCounterMode === 'percent') {
-            // Mode 3: Percentage
-            let pct = null;
-            if (book?.locations && typeof book.locations.percentageFromCfi === 'function') {
-                pct = book.locations.percentageFromCfi(start.cfi);
-            }
-            if (pct === null && start.percentage !== undefined) {
-                pct = start.percentage;
-            }
-
-            if (pct !== null && typeof pct === 'number') {
-                const pctVal = (Math.max(0, Math.min(1, pct)) * 100).toFixed(1);
-                counterEl.textContent = `${pctVal}%`;
-                counterEl.title = `Postęp: ${pctVal}%. Kliknij, aby zmienić tryb.`;
-            } else if (totalChapters > 1) {
-                const pctVal = ((chapIndex / totalChapters) * 100).toFixed(1);
-                counterEl.textContent = `${pctVal}%`;
-                counterEl.title = `Postęp: ok. ${pctVal}%. Kliknij, aby zmienić tryb.`;
-            } else {
-                counterEl.textContent = '0%';
-                counterEl.title = 'Postęp: 0%. Kliknij, aby zmienić tryb.';
             }
         }
     }
@@ -389,13 +514,13 @@
     function cycleCounterMode() {
         if (currentCounterMode === 'relative') {
             currentCounterMode = 'absolute';
-            showToast('Licznik: Strony (bezwzględne / znormalizowane)');
+            showToast('Tryb: Strony znormalizowane');
         } else if (currentCounterMode === 'absolute') {
             currentCounterMode = 'percent';
-            showToast('Licznik: Procent ukończenia');
+            showToast('Tryb: Procent ukończenia');
         } else {
             currentCounterMode = 'relative';
-            showToast('Licznik: Ekrany (względne dla urządzenia)');
+            showToast('Tryb: Ekrany urządzenia (cała książka)');
         }
         localStorage.setItem(COUNTER_STORAGE_KEY, currentCounterMode);
         updateCounterDisplay();
@@ -455,7 +580,7 @@
         counter.className = 'reader-page-counter';
         counter.setAttribute('role', 'button');
         counter.setAttribute('tabindex', '0');
-        counter.textContent = '--';
+        counter.textContent = (currentCounterMode === 'percent') ? '0%' : '0 / 0';
 
         counter.addEventListener('click', (e) => {
             e.stopPropagation();
