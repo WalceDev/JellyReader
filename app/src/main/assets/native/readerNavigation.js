@@ -1,11 +1,12 @@
 /**
- * Jellyfin Reader - Enhanced Navigation & Touch Handler
- * Precision touch overlay mounted directly inside #bookPlayer dialog.
+ * Jellyfin Reader - Capture-Phase Navigation & Touch Engine
+ * Intercepts gestures and taps before any internal components.
+ * Zero DOM overlays, zero styling interference.
  */
 (() => {
     'use strict';
 
-    console.log('[JellyfinReader] Initializing Embedded Touch Overlay...');
+    console.log('[JellyfinReader] Initializing Capture-Phase Navigation Engine...');
 
     const STORAGE_KEY = 'jellyfin_reader_nav_mode'; // 'tap' or 'gesture'
     let currentMode = localStorage.getItem(STORAGE_KEY) || 'gesture';
@@ -32,24 +33,12 @@
         }, 1800);
     }
 
-    function getBookPlayer() {
-        return window.NavigationHelper?.playbackManager?.getCurrentPlayer() || null;
+    function isReaderActive() {
+        return document.getElementById('bookPlayer') !== null || document.querySelector('.bookOsd') !== null;
     }
 
-    // Disable native Jellyfin TouchHelper
-    function neutralizeNativeTouchHelper() {
-        const player = getBookPlayer();
-        if (player) {
-            if (player.touchHelper) {
-                try { player.touchHelper.destroy(); } catch (e) {}
-                player.touchHelper = null;
-            }
-            if (player.constructor && player.constructor.prototype) {
-                player.constructor.prototype.addSwipeGestures = function() {
-                    // Intentionally no-op: gestures handled by jellyfinReaderTouchOverlay
-                };
-            }
-        }
+    function getBookPlayer() {
+        return window.NavigationHelper?.playbackManager?.getCurrentPlayer() || null;
     }
 
     function turnNext() {
@@ -78,9 +67,15 @@
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     }
 
-    function toggleOsd() {
-        // BookOsd listens to document click to toggle visibility
-        document.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    function suppressNextClick() {
+        const killClick = (evt) => {
+            evt.stopPropagation();
+            evt.stopImmediatePropagation();
+            evt.preventDefault();
+            window.removeEventListener('click', killClick, true);
+        };
+        window.addEventListener('click', killClick, true);
+        setTimeout(() => window.removeEventListener('click', killClick, true), 350);
     }
 
     // Touch event coordinates
@@ -88,16 +83,30 @@
     let touchStartY = 0;
     let touchStartTime = 0;
 
-    function handleOverlayTouchStart(e) {
+    function handleCaptureTouchStart(e) {
+        if (!isReaderActive()) return;
         if (!e.touches || e.touches.length !== 1) return;
+
+        // If touching OSD buttons or toolbars, let them interact normally
+        if (e.target && e.target.closest('.bookOsdRow, .reader-mode-toggle-btn')) {
+            return;
+        }
+
         const touch = e.touches[0];
         touchStartX = touch.clientX;
         touchStartY = touch.clientY;
         touchStartTime = Date.now();
     }
 
-    function handleOverlayTouchEnd(e) {
+    function handleCaptureTouchEnd(e) {
+        if (!isReaderActive()) return;
         if (!e.changedTouches || e.changedTouches.length === 0) return;
+
+        // If touching OSD buttons or toolbars, ignore
+        if (e.target && e.target.closest('.bookOsdRow, .reader-mode-toggle-btn')) {
+            return;
+        }
+
         const touch = e.changedTouches[0];
         const deltaX = touch.clientX - touchStartX;
         const deltaY = touch.clientY - touchStartY;
@@ -106,10 +115,14 @@
         const absX = Math.abs(deltaX);
         const absY = Math.abs(deltaY);
 
-        // 1. SWIPE DETECTION (Tolerant angle)
+        // 1. SWIPE DETECTION (Tolerant angle: absX >= 35, absX > absY * 0.5)
         const isSwipe = absX >= 35 && absX > absY * 0.5 && deltaTime < 650;
         if (isSwipe) {
-            e.preventDefault();
+            // STOP propagation so Jellyfin's TouchHelper NEVER fires!
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            suppressNextClick();
+
             if (deltaX < 0) {
                 turnNext();
             } else {
@@ -121,49 +134,34 @@
         // 2. TAP DETECTION
         const isTap = deltaTime < 350 && absX < 25 && absY < 25;
         if (isTap) {
-            e.preventDefault();
             if (currentMode === 'tap') {
-                const overlay = e.currentTarget || document.getElementById('jellyfinReaderTouchOverlay');
-                const width = (overlay && overlay.clientWidth) || window.innerWidth;
+                const width = window.innerWidth;
                 const ratio = touch.clientX / width;
 
                 if (ratio < 0.33) {
+                    // Tap left zone: Prev page
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    suppressNextClick();
                     turnPrev();
                 } else if (ratio > 0.67) {
+                    // Tap right zone: Next page
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    suppressNextClick();
                     turnNext();
                 } else {
-                    toggleOsd();
+                    // Tap center zone: Let click pass naturally to BookOsd to toggle GUI!
                 }
             } else {
-                // In gesture mode, tap toggles OSD
-                toggleOsd();
+                // In gesture mode: tapping anywhere in reading area lets click pass to toggle BookOsd
             }
         }
     }
 
-    // Mount overlay inside #bookPlayer
-    function ensureTouchOverlay() {
-        const bookPlayer = document.getElementById('bookPlayer') || document.querySelector('.bookPlayerContainer')?.parentElement;
-        let overlay = document.getElementById('jellyfinReaderTouchOverlay');
-
-        if (!bookPlayer) {
-            if (overlay) overlay.remove();
-            return;
-        }
-
-        if (!overlay || overlay.parentElement !== bookPlayer) {
-            if (overlay) overlay.remove();
-
-            overlay = document.createElement('div');
-            overlay.id = 'jellyfinReaderTouchOverlay';
-            overlay.addEventListener('touchstart', handleOverlayTouchStart, { passive: true });
-            overlay.addEventListener('touchend', handleOverlayTouchEnd, { passive: false });
-            bookPlayer.appendChild(overlay);
-            console.log('[JellyfinReader] Embedded touch overlay attached to #bookPlayer.');
-        }
-
-        neutralizeNativeTouchHelper();
-    }
+    // Attach Capture-phase listeners to window
+    window.addEventListener('touchstart', handleCaptureTouchStart, { capture: true, passive: true });
+    window.addEventListener('touchend', handleCaptureTouchEnd, { capture: true, passive: false });
 
     // Inject toggle button into .bookOsdRow
     function ensureOsdButton() {
@@ -208,23 +206,20 @@
         }
     }
 
-    // Synchronize observer
+    // Synchronize observer for OSD button
     const observer = new MutationObserver(() => {
         ensureOsdButton();
-        ensureTouchOverlay();
     });
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             ensureOsdButton();
-            ensureTouchOverlay();
             observer.observe(document.body, { childList: true, subtree: true });
         });
     } else {
         ensureOsdButton();
-        ensureTouchOverlay();
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    console.log('[JellyfinReader] Embedded Touch Overlay Engine ready.');
+    console.log('[JellyfinReader] Capture-Phase Navigation Engine ready.');
 })();
