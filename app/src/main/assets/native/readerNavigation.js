@@ -1,14 +1,17 @@
 /**
  * Jellyfin Reader - Enhanced Navigation & Touch Handler
- * Safe integration with BookOsd and epub.js.
+ * Ultra-responsive touch zones, gesture control, rapid flipping support, and OSD integration.
  */
 (() => {
     'use strict';
 
-    console.log('[JellyfinReader] Initializing Reader Navigation...');
+    console.log('[JellyfinReader] Initializing Reader Navigation v3...');
 
     const STORAGE_KEY = 'jellyfin_reader_nav_mode'; // 'tap' or 'gesture'
     let currentMode = localStorage.getItem(STORAGE_KEY) || 'gesture';
+    let lastPageTurnTime = 0;
+    const TURN_COOLDOWN_MS = 100; // Ultra-fast response allowing rapid consecutive taps
+    let touchHandled = false;
 
     // SVG Icons
     const ICON_TAP = `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:currentColor;"><path d="M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74a4.5 4.5 0 0 0-9 0c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26a1.53 1.53 0 0 0-.66-.15H13v-6a1.5 1.5 0 0 0-3 0v9.58l-3.37-.71a1.49 1.49 0 0 0-1.42.41l-.88.89 4.96 4.96c.38.38.89.59 1.42.59h6.45c1.01 0 1.87-.75 1.98-1.75l.54-4.83a2 2 0 0 0-.84-1.73z"/></svg>`;
@@ -30,8 +33,38 @@
         }, 1800);
     }
 
-    // Navigation triggers
+    // Suppress synthetic clicks following a tap action
+    function suppressSyntheticClick() {
+        const handler = (evt) => {
+            evt.stopImmediatePropagation();
+            evt.preventDefault();
+            window.removeEventListener('click', handler, true);
+            document.removeEventListener('click', handler, true);
+        };
+        window.addEventListener('click', handler, true);
+        document.addEventListener('click', handler, true);
+        setTimeout(() => {
+            window.removeEventListener('click', handler, true);
+            document.removeEventListener('click', handler, true);
+        }, 300);
+    }
+
+    function getBookPlayer() {
+        return window.NavigationHelper?.playbackManager?.getCurrentPlayer() || null;
+    }
+
+    // Navigation triggers with cooldown guard
     function triggerPrevPage() {
+        const now = Date.now();
+        if (now - lastPageTurnTime < TURN_COOLDOWN_MS) return;
+        lastPageTurnTime = now;
+
+        const player = getBookPlayer();
+        if (player && typeof player.previous === 'function') {
+            player.previous();
+            return;
+        }
+
         const bottomRow = document.querySelector('.bookOsd .bookOsdRow:last-child') || document.querySelector('.bookOsdRow:last-child');
         const prevBtn = bottomRow ? bottomRow.querySelector('button') : null;
         if (prevBtn) {
@@ -42,6 +75,16 @@
     }
 
     function triggerNextPage() {
+        const now = Date.now();
+        if (now - lastPageTurnTime < TURN_COOLDOWN_MS) return;
+        lastPageTurnTime = now;
+
+        const player = getBookPlayer();
+        if (player && typeof player.next === 'function') {
+            player.next();
+            return;
+        }
+
         const bottomRow = document.querySelector('.bookOsd .bookOsdRow:last-child') || document.querySelector('.bookOsdRow:last-child');
         const buttons = bottomRow ? bottomRow.querySelectorAll('button') : [];
         if (buttons.length >= 2) {
@@ -52,9 +95,8 @@
     }
 
     function toggleOsd() {
-        // Trigger click outside bookOsdRow to toggle OSD visibility
-        const container = document.querySelector('#bookPlayerContainer') || document.body;
-        container.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        // Dispatch click to document outside .bookOsdRow to toggle OSD without canvas side-effects
+        document.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }
 
     function dispatchKey(key, keyCode) {
@@ -98,14 +140,13 @@
             showToast(currentMode === 'tap' ? 'Tryb: Tapnięcia (Lewo / Prawo)' : 'Tryb: Gesty (Przesuwanie stron)');
         });
 
-        // Insert right after the spacer (first item on the right tools section)
         if (spacer.nextSibling) {
             spacer.parentNode.insertBefore(toggleBtn, spacer.nextSibling);
         } else {
             spacer.parentNode.appendChild(toggleBtn);
         }
 
-        console.log('[JellyfinReader] Mode toggle button inserted successfully next to spacer.');
+        console.log('[JellyfinReader] Mode toggle button inserted.');
     }
 
     function updateButtonAppearance(btn) {
@@ -123,26 +164,33 @@
     // Touch and Gesture Logic
     let startX = 0;
     let startY = 0;
+    let startScreenX = 0;
     let startTime = 0;
 
     function handleTouchStart(e) {
         if (!e.touches || e.touches.length !== 1) return;
+        touchHandled = false; // Reset for new physical touch
         startX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
+        startScreenX = e.touches[0].screenX || e.touches[0].clientX;
         startTime = Date.now();
     }
 
     function handleTouchEnd(e) {
         if (!e.changedTouches || e.changedTouches.length === 0) return;
-        const endX = e.changedTouches[0].clientX;
-        const endY = e.changedTouches[0].clientY;
+        if (touchHandled) return; // Prevent duplicate execution from same physical touch
+
+        const touch = e.changedTouches[0];
+        const endX = touch.clientX;
+        const endY = touch.clientY;
+        const endScreenX = touch.screenX || endX;
         const deltaX = endX - startX;
         const deltaY = endY - startY;
         const deltaTime = Date.now() - startTime;
 
         // Ignore touches on UI controls, buttons, forms, sliders, OSD rows
         const target = e.target;
-        if (target && target.closest('button, a, input, select, [role="button"], .bookOsdRow, .osdControls')) {
+        if (target && target.closest('button, a, input, select, [role="button"], .bookOsdRow, .osdControls, .reader-mode-toggle-btn')) {
             return;
         }
 
@@ -150,20 +198,25 @@
         const absY = Math.abs(deltaY);
 
         if (currentMode === 'tap') {
-            // Tap mode: short tap with minimal movement
+            // Tap mode: short touch with minimal movement (< 25px)
             if (deltaTime < 300 && absX < 25 && absY < 25) {
-                const screenWidth = window.innerWidth;
-                const ratio = startX / screenWidth;
+                touchHandled = true;
+                e.preventDefault();
+                suppressSyntheticClick();
 
-                if (ratio < 0.30) {
+                const screenWidth = window.screen.width || window.innerWidth;
+                const ratio = endScreenX / screenWidth;
+
+                if (ratio < 0.33) {
                     triggerPrevPage();
-                } else if (ratio > 0.70) {
+                } else if (ratio > 0.67) {
                     triggerNextPage();
                 } else {
                     toggleOsd();
                 }
             } else if (absX >= 40 && absX > absY * 0.6 && deltaTime < 500) {
-                // Swipe still works as fallback in tap mode
+                // Swipe fallback in tap mode
+                touchHandled = true;
                 if (deltaX < 0) {
                     triggerNextPage();
                 } else {
@@ -171,8 +224,9 @@
                 }
             }
         } else {
-            // Enhanced Gesture mode: tolerant angle swipe
+            // Gesture mode: tolerant angle swipe
             if (absX >= 35 && absX > absY * 0.55 && deltaTime < 550) {
+                touchHandled = true;
                 if (deltaX < 0) {
                     triggerNextPage();
                 } else {
@@ -182,28 +236,26 @@
         }
     }
 
-    function attachTouchListeners(target) {
-        if (!target || target._hasReaderTouch) return;
-        target._hasReaderTouch = true;
+    function attachTouchListeners(win) {
+        if (!win || win._hasReaderTouch) return;
+        win._hasReaderTouch = true;
 
-        target.addEventListener('touchstart', handleTouchStart, { passive: true });
-        target.addEventListener('touchend', handleTouchEnd, { passive: true });
+        win.addEventListener('touchstart', handleTouchStart, { passive: true });
+        win.addEventListener('touchend', handleTouchEnd, { passive: false });
     }
 
-    // Attach listeners without overriding ANY onload properties!
     function scanAndAttachIframes() {
         const iframes = document.querySelectorAll('iframe');
         iframes.forEach(iframe => {
             try {
-                if (iframe.contentDocument) {
-                    attachTouchListeners(iframe.contentDocument);
+                if (iframe.contentWindow) {
+                    attachTouchListeners(iframe.contentWindow);
                 }
             } catch (err) {}
-            // Use addEventListener, NEVER assign to onload
             iframe.addEventListener('load', () => {
                 try {
-                    if (iframe.contentDocument) {
-                        attachTouchListeners(iframe.contentDocument);
+                    if (iframe.contentWindow) {
+                        attachTouchListeners(iframe.contentWindow);
                     }
                 } catch (err) {}
             }, { passive: true });
@@ -216,7 +268,6 @@
     });
 
     attachTouchListeners(window);
-    attachTouchListeners(document);
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
@@ -230,5 +281,5 @@
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    console.log('[JellyfinReader] Reader Navigation ready.');
+    console.log('[JellyfinReader] Reader Navigation v3 ready.');
 })();
