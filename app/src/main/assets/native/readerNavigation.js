@@ -18,6 +18,14 @@
     let lastTurnTime = 0;
     const COOLDOWN_MS = 120;
 
+    // Counter state
+    const COUNTER_STORAGE_KEY = 'jellyfin_reader_counter_mode'; // 'relative' | 'absolute' | 'percent'
+    let currentCounterMode = localStorage.getItem(COUNTER_STORAGE_KEY) || 'relative';
+    let activeBookPlayer = null;
+    let currentBookInstance = null;
+    let lastLocationData = null;
+    const chapterScreensCache = {};
+
     // SVG Icons
     const ICON_TAP = `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:currentColor;"><path d="M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74a4.5 4.5 0 0 0-9 0c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26a1.53 1.53 0 0 0-.66-.15H13v-6a1.5 1.5 0 0 0-3 0v9.58l-3.37-.71a1.49 1.49 0 0 0-1.42.41l-.88.89 4.96 4.96c.38.38.89.59 1.42.59h6.45c1.01 0 1.87-.75 1.98-1.75l.54-4.83a2 2 0 0 0-.84-1.73z"/></svg>`;
     const ICON_GESTURE = `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:currentColor;"><path d="M10 9h4V6h3l-5-5-5 5h3v3zm-1 1H6V7l-5 5 5 5v-3h3v-4zm14 2l-5-5v3h-3v4h3v3l5-5zm-9 3h-4v3H7l5 5 5-5h-3v-3z"/></svg>`;
@@ -177,9 +185,13 @@
         }, { passive: true });
     }
 
-    // Hook BookPlayer instance to intercept addSwipeGestures
+    // Hook BookPlayer instance to intercept addSwipeGestures and counter
     function hookPlayer(player) {
-        if (!player || player._readerNavHooked) return;
+        if (!player) return;
+        activeBookPlayer = player;
+        hookRenditionAndBook(player);
+
+        if (player._readerNavHooked) return;
         player._readerNavHooked = true;
 
         console.log('[JellyfinReader] Hooking BookPlayer instance:', player.name || player.id);
@@ -211,6 +223,184 @@
         });
     }
 
+    // Hook rendition events and book locations for the page counter
+    function hookRenditionAndBook(player) {
+        if (!player) return;
+        activeBookPlayer = player;
+
+        // Reset cache if a new book instance is loaded
+        if (player.book && player.book !== currentBookInstance) {
+            currentBookInstance = player.book;
+            for (const k in chapterScreensCache) {
+                delete chapterScreensCache[k];
+            }
+            lastLocationData = null;
+        }
+
+        // Hook rendition relocated event
+        if (player.rendition && !player.rendition._readerCounterHooked) {
+            player.rendition._readerCounterHooked = true;
+            console.log('[JellyfinReader] Hooking rendition relocated event for counter');
+
+            player.rendition.on('relocated', (location) => {
+                onRenditionRelocated(player, location);
+            });
+
+            // Initial location check if already rendered
+            try {
+                const loc = typeof player.rendition.currentLocation === 'function'
+                    ? player.rendition.currentLocation()
+                    : player.rendition.location;
+                if (loc && loc.start) {
+                    onRenditionRelocated(player, loc);
+                }
+            } catch (e) {}
+        }
+
+        // Generate canonical book locations if not available
+        if (player.book && player.book.locations) {
+            const total = player.book.locations.total;
+            if ((!total || total === 0) && !player.book._generatingLocations) {
+                player.book._generatingLocations = true;
+                const readyPromise = player.book.ready ? player.book.ready : Promise.resolve();
+                readyPromise.then(() => {
+                    return player.book.locations.generate(1024);
+                }).then(() => {
+                    console.log('[JellyfinReader] Book locations generated:', player.book.locations.total);
+                    updateCounterDisplay();
+                }).catch((err) => {
+                    console.warn('[JellyfinReader] Error generating locations:', err);
+                });
+            }
+        }
+    }
+
+    function onRenditionRelocated(player, location) {
+        if (!location || !location.start) return;
+        lastLocationData = location;
+
+        const displayed = location.start.displayed;
+        const chapIndex = location.start.index !== undefined ? location.start.index : 0;
+        if (displayed && displayed.total && displayed.total > 0) {
+            chapterScreensCache[chapIndex] = displayed.total;
+        }
+
+        updateCounterDisplay();
+    }
+
+    function updateCounterDisplay() {
+        const counterEl = document.getElementById('btnReaderPageCounter');
+        if (!counterEl) return;
+
+        if (!lastLocationData || !lastLocationData.start) {
+            counterEl.textContent = '--';
+            return;
+        }
+
+        const loc = lastLocationData;
+        const start = loc.start;
+        const player = activeBookPlayer;
+        const book = player?.book;
+        const chapIndex = start.index !== undefined ? start.index : 0;
+        const displayed = start.displayed;
+        const totalChapters = book?.spine?.items?.length || 1;
+
+        if (currentCounterMode === 'relative') {
+            // Mode 1: Relative screens across entire book
+            if (displayed && displayed.page && displayed.total) {
+                const currChapPage = displayed.page;
+                const currChapTotal = displayed.total;
+                chapterScreensCache[chapIndex] = currChapTotal;
+
+                const visitedIndices = Object.keys(chapterScreensCache);
+                const avgScreens = visitedIndices.length > 0
+                    ? (visitedIndices.reduce((sum, idx) => sum + chapterScreensCache[idx], 0) / visitedIndices.length)
+                    : currChapTotal;
+
+                let screensBefore = 0;
+                let totalEstimated = 0;
+                for (let i = 0; i < totalChapters; i++) {
+                    const s = chapterScreensCache[i] !== undefined
+                        ? chapterScreensCache[i]
+                        : Math.max(1, Math.round(avgScreens));
+                    if (i < chapIndex) {
+                        screensBefore += s;
+                    }
+                    totalEstimated += s;
+                }
+
+                const currentScreen = Math.min(totalEstimated, screensBefore + currChapPage);
+                counterEl.textContent = `ekr. ${currentScreen} / ${totalEstimated}`;
+                counterEl.title = `Ekran ${currentScreen} z ${totalEstimated} (względne dla urządzenia). Kliknij, aby zmienić tryb.`;
+            } else {
+                counterEl.textContent = 'ekr. ...';
+                counterEl.title = 'Obliczanie ekranów... Kliknij, aby zmienić tryb.';
+            }
+        } else if (currentCounterMode === 'absolute') {
+            // Mode 2: Absolute canonical pages
+            const hasLocations = book?.locations && typeof book.locations.total === 'number' && book.locations.total > 0;
+            if (hasLocations) {
+                const currLoc = start.location !== undefined ? (start.location + 1) : null;
+                const totalLoc = book.locations.total;
+                if (currLoc !== null && totalLoc > 0) {
+                    counterEl.textContent = `str. ${currLoc} / ${totalLoc}`;
+                    counterEl.title = `Strona ${currLoc} z ${totalLoc} (bezwzględne / znormalizowane). Kliknij, aby zmienić tryb.`;
+                } else {
+                    counterEl.textContent = `str. ... / ${totalLoc}`;
+                    counterEl.title = 'Strony bezwzględne. Kliknij, aby zmienić tryb.';
+                }
+            } else if (book?.pageList && book.pageList.length > 0) {
+                const page = typeof book.locations?.pageFromCfi === 'function' ? book.locations.pageFromCfi(start.cfi) : null;
+                if (page) {
+                    counterEl.textContent = `str. ${page} / ${book.pageList.length}`;
+                } else {
+                    counterEl.textContent = `str. ... / ${book.pageList.length}`;
+                }
+                counterEl.title = 'Strony wydania drukowanego. Kliknij, aby zmienić tryb.';
+            } else {
+                counterEl.textContent = 'str. ...';
+                counterEl.title = 'Indeksowanie stron... Kliknij, aby zmienić tryb.';
+            }
+        } else if (currentCounterMode === 'percent') {
+            // Mode 3: Percentage
+            let pct = null;
+            if (book?.locations && typeof book.locations.percentageFromCfi === 'function') {
+                pct = book.locations.percentageFromCfi(start.cfi);
+            }
+            if (pct === null && start.percentage !== undefined) {
+                pct = start.percentage;
+            }
+
+            if (pct !== null && typeof pct === 'number') {
+                const pctVal = (Math.max(0, Math.min(1, pct)) * 100).toFixed(1);
+                counterEl.textContent = `${pctVal}%`;
+                counterEl.title = `Postęp: ${pctVal}%. Kliknij, aby zmienić tryb.`;
+            } else if (totalChapters > 1) {
+                const pctVal = ((chapIndex / totalChapters) * 100).toFixed(1);
+                counterEl.textContent = `${pctVal}%`;
+                counterEl.title = `Postęp: ok. ${pctVal}%. Kliknij, aby zmienić tryb.`;
+            } else {
+                counterEl.textContent = '0%';
+                counterEl.title = 'Postęp: 0%. Kliknij, aby zmienić tryb.';
+            }
+        }
+    }
+
+    function cycleCounterMode() {
+        if (currentCounterMode === 'relative') {
+            currentCounterMode = 'absolute';
+            showToast('Licznik: Strony (bezwzględne / znormalizowane)');
+        } else if (currentCounterMode === 'absolute') {
+            currentCounterMode = 'percent';
+            showToast('Licznik: Procent ukończenia');
+        } else {
+            currentCounterMode = 'relative';
+            showToast('Licznik: Ekrany (względne dla urządzenia)');
+        }
+        localStorage.setItem(COUNTER_STORAGE_KEY, currentCounterMode);
+        updateCounterDisplay();
+    }
+
     // Continuously check for BookPlayer and active iframes (Safeguard 5: Chapter re-hooking)
     function scanAndHook() {
         const pm = window.NavigationHelper?.playbackManager || window.playbackManager;
@@ -226,6 +416,10 @@
                     hookPlayer(p);
                 }
             });
+        }
+
+        if (activeBookPlayer) {
+            hookRenditionAndBook(activeBookPlayer);
         }
 
         // Direct check for rendered chapter iframes
@@ -244,6 +438,34 @@
         }
 
         ensureOsdButton();
+        ensureTopBarCounter();
+    }
+
+    // Inject page counter button into top .bookOsdRow
+    function ensureTopBarCounter() {
+        if (document.getElementById('btnReaderPageCounter')) return;
+
+        const topRow = document.querySelector('.bookOsd .bookOsdRow:first-child') ||
+            Array.from(document.querySelectorAll('.bookOsd .bookOsdRow')).find(r => !r.querySelector('.bookOsdSpacer'));
+
+        if (!topRow) return;
+
+        const counter = document.createElement('div');
+        counter.id = 'btnReaderPageCounter';
+        counter.className = 'reader-page-counter';
+        counter.setAttribute('role', 'button');
+        counter.setAttribute('tabindex', '0');
+        counter.textContent = '--';
+
+        counter.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            cycleCounterMode();
+        });
+
+        topRow.appendChild(counter);
+        console.log('[JellyfinReader] Page counter button inserted into top OSD bar.');
+        updateCounterDisplay();
     }
 
     // Inject toggle button into .bookOsdRow
