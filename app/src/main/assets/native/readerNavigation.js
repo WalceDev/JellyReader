@@ -1,16 +1,11 @@
 /**
  * Jellyfin Reader - Enhanced Navigation & Touch Handler
- * Features:
- * - Transparent Touch Overlay ensuring exclusive touch handling.
- * - Prevents dual swipe execution from native TouchHelper.
- * - Precision 3-zone tap mode (Left = Prev, Right = Next, Center = Toggle OSD).
- * - Reliable OSD opening without phantom page turns.
- * - OSD bottom bar toggle button.
+ * Precision touch overlay mounted directly inside #bookPlayer dialog.
  */
 (() => {
     'use strict';
 
-    console.log('[JellyfinReader] Initializing Reader Touch Overlay Engine...');
+    console.log('[JellyfinReader] Initializing Embedded Touch Overlay...');
 
     const STORAGE_KEY = 'jellyfin_reader_nav_mode'; // 'tap' or 'gesture'
     let currentMode = localStorage.getItem(STORAGE_KEY) || 'gesture';
@@ -41,6 +36,22 @@
         return window.NavigationHelper?.playbackManager?.getCurrentPlayer() || null;
     }
 
+    // Disable native Jellyfin TouchHelper
+    function neutralizeNativeTouchHelper() {
+        const player = getBookPlayer();
+        if (player) {
+            if (player.touchHelper) {
+                try { player.touchHelper.destroy(); } catch (e) {}
+                player.touchHelper = null;
+            }
+            if (player.constructor && player.constructor.prototype) {
+                player.constructor.prototype.addSwipeGestures = function() {
+                    // Intentionally no-op: gestures handled by jellyfinReaderTouchOverlay
+                };
+            }
+        }
+    }
+
     function turnNext() {
         const now = Date.now();
         if (now - lastTurnTime < COOLDOWN_MS) return;
@@ -68,11 +79,11 @@
     }
 
     function toggleOsd() {
-        // BookOsd listens to click on document outside .bookOsdRow to toggle setVisible(state => !state)
+        // BookOsd listens to document click to toggle visibility
         document.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }
 
-    // Touch Overlay Management
+    // Touch event coordinates
     let touchStartX = 0;
     let touchStartY = 0;
     let touchStartTime = 0;
@@ -95,9 +106,10 @@
         const absX = Math.abs(deltaX);
         const absY = Math.abs(deltaY);
 
-        // 1. Check for SWIPE (both in gesture mode and as gesture in tap mode)
-        const isSwipe = absX >= 35 && absX > absY * 0.55 && deltaTime < 600;
+        // 1. SWIPE DETECTION (Tolerant angle)
+        const isSwipe = absX >= 35 && absX > absY * 0.5 && deltaTime < 650;
         if (isSwipe) {
+            e.preventDefault();
             if (deltaX < 0) {
                 turnNext();
             } else {
@@ -106,11 +118,13 @@
             return;
         }
 
-        // 2. Check for TAP (short touch, minimal movement)
+        // 2. TAP DETECTION
         const isTap = deltaTime < 350 && absX < 25 && absY < 25;
         if (isTap) {
+            e.preventDefault();
             if (currentMode === 'tap') {
-                const width = window.innerWidth;
+                const overlay = e.currentTarget || document.getElementById('jellyfinReaderTouchOverlay');
+                const width = (overlay && overlay.clientWidth) || window.innerWidth;
                 const ratio = touch.clientX / width;
 
                 if (ratio < 0.33) {
@@ -121,34 +135,37 @@
                     toggleOsd();
                 }
             } else {
-                // In gesture mode, tapping outside controls toggles the OSD
+                // In gesture mode, tap toggles OSD
                 toggleOsd();
             }
         }
     }
 
+    // Mount overlay inside #bookPlayer
     function ensureTouchOverlay() {
-        const isReaderActive = document.querySelector('.bookOsd, #bookPlayerContainer, .epub-container') !== null;
+        const bookPlayer = document.getElementById('bookPlayer') || document.querySelector('.bookPlayerContainer')?.parentElement;
         let overlay = document.getElementById('jellyfinReaderTouchOverlay');
 
-        if (!isReaderActive) {
-            if (overlay) overlay.style.display = 'none';
+        if (!bookPlayer) {
+            if (overlay) overlay.remove();
             return;
         }
 
-        if (!overlay) {
+        if (!overlay || overlay.parentElement !== bookPlayer) {
+            if (overlay) overlay.remove();
+
             overlay = document.createElement('div');
             overlay.id = 'jellyfinReaderTouchOverlay';
             overlay.addEventListener('touchstart', handleOverlayTouchStart, { passive: true });
-            overlay.addEventListener('touchend', handleOverlayTouchEnd, { passive: true });
-            document.body.appendChild(overlay);
-            console.log('[JellyfinReader] Touch overlay mounted.');
+            overlay.addEventListener('touchend', handleOverlayTouchEnd, { passive: false });
+            bookPlayer.appendChild(overlay);
+            console.log('[JellyfinReader] Embedded touch overlay attached to #bookPlayer.');
         }
 
-        overlay.style.display = 'block';
+        neutralizeNativeTouchHelper();
     }
 
-    // OSD Button Injection
+    // Inject toggle button into .bookOsdRow
     function ensureOsdButton() {
         if (document.getElementById('btnToggleReaderMode')) return;
 
@@ -167,7 +184,7 @@
             currentMode = currentMode === 'gesture' ? 'tap' : 'gesture';
             localStorage.setItem(STORAGE_KEY, currentMode);
             updateButtonAppearance(toggleBtn);
-            showToast(currentMode === 'tap' ? 'Tryb: Strefy (Lewo / Prawo / Środek)' : 'Tryb: Gesty (Przesuwanie stron)');
+            showToast(currentMode === 'tap' ? 'Tryb: Strefy tapnięć (Lewo / Prawo / Środek)' : 'Tryb: Gesty (Przesuwanie stron)');
         });
 
         if (spacer.nextSibling) {
@@ -191,7 +208,7 @@
         }
     }
 
-    // Observer to keep overlay and OSD button in sync
+    // Synchronize observer
     const observer = new MutationObserver(() => {
         ensureOsdButton();
         ensureTouchOverlay();
@@ -209,5 +226,5 @@
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    console.log('[JellyfinReader] Reader Touch Overlay Engine ready.');
+    console.log('[JellyfinReader] Embedded Touch Overlay Engine ready.');
 })();
