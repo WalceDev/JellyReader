@@ -70,9 +70,24 @@
         }
     }
 
+    let currentChapterRoot = null;
+
     // Attach touch & click handler to the chapter root inside the iframe
     function attachChapterTouch(element, player) {
-        if (!element || element._readerTouchAttached) return;
+        if (!element) return;
+        currentChapterRoot = element;
+
+        try {
+            const win = element.ownerDocument.defaultView;
+            if (win && !win._readerScrollAttached) {
+                win._readerScrollAttached = true;
+                win.addEventListener('scroll', () => {
+                    updateCounterDisplay();
+                }, { passive: true });
+            }
+        } catch (e) {}
+
+        if (element._readerTouchAttached) return;
         element._readerTouchAttached = true;
 
         console.log('[JellyfinReader] Attaching hardened touch handler to chapter DOM');
@@ -223,102 +238,80 @@
         });
     }
 
-    // Cache keys
-    const LOC_CACHE_PREFIX = 'jellyfin_book_locs_';
+    // Extract exact chapter sizes from in-memory zip archive (or fallback)
+    function getBookChapterSizes(player) {
+        if (!player || !player.book) return null;
+        const book = player.book;
+        const spine = book.spine;
+        if (!spine || !spine.items || spine.items.length === 0) return null;
 
-    function getBookId(player) {
-        return player?.currentItem?.Id ||
-               player?.currentItem?.Name ||
-               player?.book?.packaging?.metadata?.title ||
-               player?.book?.key?.() ||
-               'current_book';
-    }
+        const items = spine.items;
+        const sizes = [];
+        let totalBytes = 0;
 
-    function loadCachedLocations(player) {
-        if (!player?.book?.locations) return false;
-        const bookId = getBookId(player);
-        try {
-            const cached = localStorage.getItem(LOC_CACHE_PREFIX + bookId);
-            if (cached) {
-                player.book.locations.load(cached);
-                console.log('[JellyfinReader] Loaded locations from cache. Total:', player.book.locations.total);
-                return typeof player.book.locations.total === 'number' && player.book.locations.total > 0;
+        const zipFiles = book.archive?.zip?.files;
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            let size = 0;
+
+            if (zipFiles) {
+                const cleanHref = (item.href || '').replace(/^\//, '');
+                for (const path in zipFiles) {
+                    if (path.endsWith(cleanHref) || (item.idref && path.includes(item.idref))) {
+                        const zf = zipFiles[path];
+                        size = zf._data?.uncompressedSize || zf.uncompressedSize || zf._data?.compressedSize || 0;
+                        if (size > 0) break;
+                    }
+                }
             }
-        } catch (e) {
-            console.warn('[JellyfinReader] Failed to load cached locations:', e);
-        }
-        return false;
-    }
 
-    function saveCachedLocations(player) {
-        if (!player?.book?.locations || !player.book.locations.total) return;
-        const bookId = getBookId(player);
-        try {
-            const serialized = player.book.locations.save();
-            localStorage.setItem(LOC_CACHE_PREFIX + bookId, serialized);
-            console.log('[JellyfinReader] Saved locations to cache for:', bookId, 'Total:', player.book.locations.total);
-        } catch (e) {
-            console.warn('[JellyfinReader] Failed to save locations to cache:', e);
-        }
-    }
+            if (size <= 0) {
+                size = 12000;
+            }
 
-    function triggerLocationsGeneration(player) {
-        if (!player?.book?.locations) return;
-        if (player.book.locations.total && player.book.locations.total > 0) return;
-        if (player.book._generatingLocations) return;
-
-        // Try cache first
-        if (loadCachedLocations(player)) {
-            updateCounterDisplay();
-            return;
+            sizes.push(size);
+            totalBytes += size;
         }
 
-        player.book._generatingLocations = true;
-        console.log('[JellyfinReader] Generating exact full-book locations...');
-
-        const spinePromise = player.book.loaded?.spine || player.book.opened || Promise.resolve();
-
-        spinePromise.then(() => {
-            return player.book.locations.generate(1024);
-        }).then(() => {
-            console.log('[JellyfinReader] Full-book locations generated! Total:', player.book.locations.total);
-            saveCachedLocations(player);
-            updateCounterDisplay();
-        }).catch((err) => {
-            console.warn('[JellyfinReader] Error generating locations:', err);
-        }).finally(() => {
-            player.book._generatingLocations = false;
-        });
+        return {
+            sizes,
+            totalBytes,
+            totalChapters: items.length
+        };
     }
 
-    // Measure exact screen dimensions and scroll position in active chapter iframe
+    // Measure exact screen dimensions and scroll position in active chapter
     function getChapterScreenInfo() {
-        const iframe = document.querySelector('#bookPlayer iframe, #bookPlayerContainer iframe, .epub-container iframe');
-        if (!iframe || !iframe.contentDocument) return null;
+        let doc = currentChapterRoot ? currentChapterRoot.ownerDocument : null;
+        let win = doc ? doc.defaultView : null;
+
+        if (!doc || !win) {
+            const iframes = document.querySelectorAll('iframe');
+            for (const f of iframes) {
+                try {
+                    if (f.contentDocument && (f.contentDocument.body || f.contentDocument.documentElement)) {
+                        doc = f.contentDocument;
+                        win = doc.defaultView || f.contentWindow;
+                        currentChapterRoot = doc.documentElement;
+                        break;
+                    }
+                } catch (e) {}
+            }
+        }
+
+        if (!doc || !win) return null;
 
         try {
-            const doc = iframe.contentDocument;
-            const win = doc.defaultView || iframe.contentWindow;
-            if (!win) return null;
-
-            const clientWidth = win.innerWidth || doc.documentElement.clientWidth || iframe.clientWidth;
+            const clientWidth = win.innerWidth || doc.documentElement.clientWidth || doc.body.clientWidth;
             if (!clientWidth || clientWidth <= 0) return null;
 
             let offset = win.pageXOffset || doc.documentElement.scrollLeft || doc.body.scrollLeft || 0;
 
             if (offset === 0) {
-                const transform = doc.documentElement.style.transform || doc.body.style.transform || iframe.style.transform;
+                const transform = doc.documentElement.style.transform || doc.body.style.transform;
                 if (transform) {
                     const match = transform.match(/translate(?:3d)?\(\s*(-?\d+(?:\.\d+)?)(?:px)?/);
-                    if (match) {
-                        offset = Math.abs(parseFloat(match[1]));
-                    }
-                }
-            }
-            if (offset === 0 && iframe.parentElement) {
-                const parentTransform = iframe.parentElement.style.transform;
-                if (parentTransform) {
-                    const match = parentTransform.match(/translate(?:3d)?\(\s*(-?\d+(?:\.\d+)?)(?:px)?/);
                     if (match) {
                         offset = Math.abs(parseFloat(match[1]));
                     }
@@ -345,7 +338,7 @@
         }
     }
 
-    // Hook rendition events and book locations for the page counter
+    // Hook rendition events for the page counter
     function hookRenditionAndBook(player) {
         if (!player) return;
         activeBookPlayer = player;
@@ -353,9 +346,6 @@
         // Reset cache if a new book instance is loaded
         if (player.book && player.book !== currentBookInstance) {
             currentBookInstance = player.book;
-            for (const k in chapterScreensCache) {
-                delete chapterScreensCache[k];
-            }
             lastLocationData = null;
         }
 
@@ -378,20 +368,11 @@
                 }
             } catch (e) {}
         }
-
-        triggerLocationsGeneration(player);
     }
 
     function onRenditionRelocated(player, location) {
         if (!location || !location.start) return;
         lastLocationData = location;
-
-        const displayed = location.start.displayed;
-        const chapIndex = location.start.index !== undefined ? location.start.index : 0;
-        if (displayed && displayed.total && displayed.total > 0) {
-            chapterScreensCache[chapIndex] = displayed.total;
-        }
-
         updateCounterDisplay();
     }
 
@@ -404,26 +385,23 @@
         const loc = lastLocationData;
         const start = loc?.start;
 
-        // Default initial value: 0 / 0 or 0%
-        if (!start) {
-            counterEl.textContent = (currentCounterMode === 'percent') ? '0%' : '0 / 0';
-            return;
-        }
+        const screenInfo = getChapterScreenInfo();
+        const bookSizes = getBookChapterSizes(player);
+        const totalChapters = bookSizes?.totalChapters || book?.spine?.items?.length || 1;
+        const chapIndex = start?.index !== undefined ? start.index : 0;
 
-        const hasLocations = book?.locations && typeof book.locations.total === 'number' && book.locations.total > 0;
-        const totalChapters = book?.spine?.items?.length || 1;
-        const chapIndex = start.index !== undefined ? start.index : 0;
+        // Extract progress percentage
+        let pct = null;
+        if (start?.percentage !== undefined && typeof start.percentage === 'number') {
+            pct = start.percentage;
+        } else if (book?.locations && typeof book.locations.percentageFromCfi === 'function' && start?.cfi) {
+            pct = book.locations.percentageFromCfi(start.cfi);
+        } else if (totalChapters > 1) {
+            pct = chapIndex / totalChapters;
+        }
 
         if (currentCounterMode === 'percent') {
             // Mode 3: Percentage (X% or X.X%)
-            let pct = null;
-            if (hasLocations && typeof book.locations.percentageFromCfi === 'function') {
-                pct = book.locations.percentageFromCfi(start.cfi);
-            }
-            if (pct === null && start.percentage !== undefined) {
-                pct = start.percentage;
-            }
-
             if (pct !== null && typeof pct === 'number' && !isNaN(pct)) {
                 const pctVal = (Math.max(0, Math.min(1, pct)) * 100).toFixed(1);
                 counterEl.textContent = `${pctVal}%`;
@@ -435,79 +413,64 @@
             return;
         }
 
-        if (currentCounterMode === 'absolute') {
-            // Mode 2: Absolute canonical pages (X / Y)
-            if (hasLocations) {
-                const currLoc = start.location !== undefined ? (start.location + 1) : null;
-                const totalLoc = book.locations.total;
-                if (currLoc !== null && totalLoc > 0) {
-                    counterEl.textContent = `${currLoc} / ${totalLoc}`;
-                    counterEl.title = `Strona ${currLoc} z ${totalLoc} (znormalizowana). Kliknij, aby zmienić tryb.`;
-                    return;
-                }
-            } else if (book?.pageList && book.pageList.length > 0) {
-                const page = typeof book.locations?.pageFromCfi === 'function' ? book.locations.pageFromCfi(start.cfi) : null;
-                if (page) {
-                    counterEl.textContent = `${page} / ${book.pageList.length}`;
-                    counterEl.title = `Strona ${page} z ${book.pageList.length} (wydanie drukowane). Kliknij, aby zmienić tryb.`;
-                    return;
-                }
-            }
-
-            counterEl.textContent = '0 / 0';
-            counterEl.title = 'Przeliczanie stron... Kliknij, aby zmienić tryb.';
-            return;
-        }
+        // Physical screen measurements in current chapter
+        const currChapPage = screenInfo ? screenInfo.currentScreen : 1;
+        const currChapScreens = screenInfo ? screenInfo.totalScreens : 1;
 
         if (currentCounterMode === 'relative') {
             // Mode 1: Relative screens for the entire book (X / Y)
-            const screenInfo = getChapterScreenInfo();
-
-            let chapPage = 1;
-            let chapTotal = 1;
-
-            if (screenInfo && screenInfo.totalScreens > 0) {
-                chapPage = screenInfo.currentScreen;
-                chapTotal = screenInfo.totalScreens;
-            } else if (start.displayed && start.displayed.total > 0) {
-                chapPage = start.displayed.page || 1;
-                chapTotal = start.displayed.total;
+            if (!screenInfo) {
+                counterEl.textContent = '0 / 0';
+                counterEl.title = 'Wczytywanie ekranu...';
+                return;
             }
 
-            if (chapTotal > 0) {
-                chapterScreensCache[chapIndex] = chapTotal;
-            }
+            const currChapBytes = bookSizes ? (bookSizes.sizes[chapIndex] || 12000) : 12000;
+            const density = Math.max(100, currChapBytes / Math.max(1, currChapScreens));
 
-            if (hasLocations) {
-                const visitedIndices = Object.keys(chapterScreensCache);
-                const avgScreens = visitedIndices.length > 0
-                    ? (visitedIndices.reduce((sum, idx) => sum + chapterScreensCache[idx], 0) / visitedIndices.length)
-                    : chapTotal;
+            let screensBefore = 0;
+            let totalEstimated = 0;
 
-                let screensBefore = 0;
-                let totalEstimated = 0;
-                for (let i = 0; i < totalChapters; i++) {
-                    const s = chapterScreensCache[i] !== undefined
-                        ? chapterScreensCache[i]
-                        : Math.max(1, Math.round(avgScreens));
-                    if (i < chapIndex) {
-                        screensBefore += s;
-                    }
-                    totalEstimated += s;
+            for (let i = 0; i < totalChapters; i++) {
+                let s = 1;
+                if (i === chapIndex) {
+                    s = currChapScreens;
+                } else if (bookSizes) {
+                    s = Math.max(1, Math.round(bookSizes.sizes[i] / density));
                 }
-
-                const currentScreen = Math.min(totalEstimated, screensBefore + chapPage);
-                counterEl.textContent = `${currentScreen} / ${totalEstimated}`;
-                counterEl.title = `Ekran ${currentScreen} z ${totalEstimated} (urządzenie, cała książka). Kliknij, aby zmienić tryb.`;
-            } else {
-                if (chapTotal > 1) {
-                    counterEl.textContent = `${chapPage} / ${chapTotal}`;
-                    counterEl.title = `Ekran ${chapPage} z ${chapTotal} w rozdziale. Kliknij, aby zmienić tryb.`;
-                } else {
-                    counterEl.textContent = '0 / 0';
-                    counterEl.title = 'Przeliczanie ekranów... Kliknij, aby zmienić tryb.';
+                if (i < chapIndex) {
+                    screensBefore += s;
                 }
+                totalEstimated += s;
             }
+
+            const currentScreen = Math.min(totalEstimated, screensBefore + currChapPage);
+            counterEl.textContent = `${currentScreen} / ${totalEstimated}`;
+            counterEl.title = `Ekran ${currentScreen} z ${totalEstimated} (urządzenie, cała książka). Kliknij, aby zmienić tryb.`;
+            return;
+        }
+
+        if (currentCounterMode === 'absolute') {
+            // Mode 2: Absolute canonical pages (X / Y)
+            const totalBytes = bookSizes ? bookSizes.totalBytes : (totalChapters * 12000);
+            const totalPages = Math.max(1, Math.round(totalBytes / 1800));
+
+            let currentPage = 1;
+            if (bookSizes && screenInfo) {
+                let bytesBefore = 0;
+                for (let i = 0; i < chapIndex; i++) {
+                    bytesBefore += bookSizes.sizes[i];
+                }
+                const inChapFraction = Math.max(0, Math.min(1, (currChapPage - 0.5) / Math.max(1, currChapScreens)));
+                bytesBefore += (bookSizes.sizes[chapIndex] || 12000) * inChapFraction;
+                currentPage = Math.max(1, Math.min(totalPages, Math.round(bytesBefore / 1800) + 1));
+            } else if (pct !== null) {
+                currentPage = Math.max(1, Math.min(totalPages, Math.round(pct * totalPages)));
+            }
+
+            counterEl.textContent = `${currentPage} / ${totalPages}`;
+            counterEl.title = `Strona ${currentPage} z ${totalPages} (znormalizowana). Kliknij, aby zmienić tryb.`;
+            return;
         }
     }
 
