@@ -238,47 +238,63 @@
         });
     }
 
-    // Extract exact chapter sizes from in-memory zip archive (or fallback)
-    function getBookChapterSizes(player) {
-        if (!player || !player.book) return null;
+    let currentBookStructure = null;
+
+    // Calculate exact readable character counts of all chapters from in-memory zip
+    function calculateExactBookStructure(player) {
+        if (!player || !player.book) return;
         const book = player.book;
         const spine = book.spine;
-        if (!spine || !spine.items || spine.items.length === 0) return null;
+        const items = spine?.items;
+        if (!items || items.length === 0) return;
 
-        const items = spine.items;
-        const sizes = [];
-        let totalBytes = 0;
-
-        const zipFiles = book.archive?.zip?.files;
+        const zip = book.archive?.zip;
+        const chapters = [];
+        let totalChars = 0;
 
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            let size = 0;
+            let chars = 0;
 
-            if (zipFiles) {
+            if (zip && zip.files) {
                 const cleanHref = (item.href || '').replace(/^\//, '');
-                for (const path in zipFiles) {
+                for (const path in zip.files) {
                     if (path.endsWith(cleanHref) || (item.idref && path.includes(item.idref))) {
-                        const zf = zipFiles[path];
-                        size = zf._data?.uncompressedSize || zf.uncompressedSize || zf._data?.compressedSize || 0;
-                        if (size > 0) break;
+                        try {
+                            const file = zip.files[path];
+                            if (typeof file.asText === 'function') {
+                                const raw = file.asText();
+                                const clean = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                                chars = clean.length;
+                            }
+                        } catch (e) {}
+                        if (chars > 0) break;
                     }
                 }
             }
 
-            if (size <= 0) {
-                size = 12000;
+            if (chars <= 0) {
+                chars = 25000; // sensible default for regular novel chapter
             }
 
-            sizes.push(size);
-            totalBytes += size;
+            chapters.push({ index: i, chars: chars, href: item.href });
+            totalChars += chars;
         }
 
-        return {
-            sizes,
-            totalBytes,
-            totalChapters: items.length
+        currentBookStructure = {
+            chapters: chapters,
+            totalChars: totalChars,
+            totalChapters: items.length,
+            totalPages: Math.max(1, Math.round(totalChars / 1800))
         };
+
+        console.log('[JellyfinReader] Exact book structure calculated:', {
+            totalChapters: items.length,
+            totalChars: totalChars,
+            totalPages: currentBookStructure.totalPages
+        });
+
+        updateCounterDisplay();
     }
 
     // Measure exact screen dimensions and scroll position in active chapter
@@ -343,10 +359,21 @@
         if (!player) return;
         activeBookPlayer = player;
 
-        // Reset cache if a new book instance is loaded
+        // Reset if a new book instance is loaded
         if (player.book && player.book !== currentBookInstance) {
             currentBookInstance = player.book;
+            currentBookStructure = null;
             lastLocationData = null;
+        }
+
+        // Wait for full spine of chapters before calculating structure
+        if (player.book && !currentBookStructure) {
+            const spinePromise = player.book.loaded?.spine || Promise.resolve();
+            spinePromise.then(() => {
+                calculateExactBookStructure(player);
+            }).catch(() => {
+                calculateExactBookStructure(player);
+            });
         }
 
         // Hook rendition relocated event
@@ -373,6 +400,11 @@
     function onRenditionRelocated(player, location) {
         if (!location || !location.start) return;
         lastLocationData = location;
+
+        if (!currentBookStructure && player.book) {
+            calculateExactBookStructure(player);
+        }
+
         updateCounterDisplay();
     }
 
@@ -386,11 +418,11 @@
         const start = loc?.start;
 
         const screenInfo = getChapterScreenInfo();
-        const bookSizes = getBookChapterSizes(player);
-        const totalChapters = bookSizes?.totalChapters || book?.spine?.items?.length || 1;
         const chapIndex = start?.index !== undefined ? start.index : 0;
+        const struct = currentBookStructure;
+        const totalChapters = struct?.totalChapters || book?.spine?.items?.length || 1;
 
-        // Extract progress percentage
+        // Progress percentage
         let pct = null;
         if (start?.percentage !== undefined && typeof start.percentage === 'number') {
             pct = start.percentage;
@@ -413,31 +445,56 @@
             return;
         }
 
-        // Physical screen measurements in current chapter
+        if (!struct) {
+            counterEl.textContent = '0 / 0';
+            counterEl.title = 'Przeliczanie książki...';
+            return;
+        }
+
         const currChapPage = screenInfo ? screenInfo.currentScreen : 1;
         const currChapScreens = screenInfo ? screenInfo.totalScreens : 1;
 
+        if (currentCounterMode === 'absolute') {
+            // Mode 2: Absolute canonical pages (X / Y)
+            const totalPages = struct.totalPages;
+            let charsBefore = 0;
+            for (let i = 0; i < chapIndex; i++) {
+                charsBefore += struct.chapters[i]?.chars || 0;
+            }
+            const currChapChars = struct.chapters[chapIndex]?.chars || 25000;
+            const inChapFraction = Math.max(0, Math.min(1, (currChapPage - 0.5) / Math.max(1, currChapScreens)));
+            const charsRead = charsBefore + (currChapChars * inChapFraction);
+            const currentPage = Math.max(1, Math.min(totalPages, Math.round(charsRead / 1800) + 1));
+
+            counterEl.textContent = `${currentPage} / ${totalPages}`;
+            counterEl.title = `Strona ${currentPage} z ${totalPages} (znormalizowana). Kliknij, aby zmienić tryb.`;
+            return;
+        }
+
         if (currentCounterMode === 'relative') {
             // Mode 1: Relative screens for the entire book (X / Y)
-            if (!screenInfo) {
-                counterEl.textContent = '0 / 0';
-                counterEl.title = 'Wczytywanie ekranu...';
-                return;
-            }
+            const currChapChars = struct.chapters[chapIndex]?.chars || 25000;
 
-            const currChapBytes = bookSizes ? (bookSizes.sizes[chapIndex] || 12000) : 12000;
-            const density = Math.max(100, currChapBytes / Math.max(1, currChapScreens));
+            // Calculate screen density
+            let density = 1400; // baseline characters per screen
+            if (currChapChars >= 2500 && currChapScreens >= 2) {
+                density = currChapChars / currChapScreens;
+            }
 
             let screensBefore = 0;
             let totalEstimated = 0;
 
             for (let i = 0; i < totalChapters; i++) {
+                const cChars = struct.chapters[i]?.chars || 25000;
                 let s = 1;
-                if (i === chapIndex) {
+                if (i === chapIndex && screenInfo) {
                     s = currChapScreens;
-                } else if (bookSizes) {
-                    s = Math.max(1, Math.round(bookSizes.sizes[i] / density));
+                } else if (cChars < 2500) {
+                    s = 1; // cover, title, dedication
+                } else {
+                    s = Math.max(1, Math.round(cChars / density));
                 }
+
                 if (i < chapIndex) {
                     screensBefore += s;
                 }
@@ -447,29 +504,6 @@
             const currentScreen = Math.min(totalEstimated, screensBefore + currChapPage);
             counterEl.textContent = `${currentScreen} / ${totalEstimated}`;
             counterEl.title = `Ekran ${currentScreen} z ${totalEstimated} (urządzenie, cała książka). Kliknij, aby zmienić tryb.`;
-            return;
-        }
-
-        if (currentCounterMode === 'absolute') {
-            // Mode 2: Absolute canonical pages (X / Y)
-            const totalBytes = bookSizes ? bookSizes.totalBytes : (totalChapters * 12000);
-            const totalPages = Math.max(1, Math.round(totalBytes / 1800));
-
-            let currentPage = 1;
-            if (bookSizes && screenInfo) {
-                let bytesBefore = 0;
-                for (let i = 0; i < chapIndex; i++) {
-                    bytesBefore += bookSizes.sizes[i];
-                }
-                const inChapFraction = Math.max(0, Math.min(1, (currChapPage - 0.5) / Math.max(1, currChapScreens)));
-                bytesBefore += (bookSizes.sizes[chapIndex] || 12000) * inChapFraction;
-                currentPage = Math.max(1, Math.min(totalPages, Math.round(bytesBefore / 1800) + 1));
-            } else if (pct !== null) {
-                currentPage = Math.max(1, Math.min(totalPages, Math.round(pct * totalPages)));
-            }
-
-            counterEl.textContent = `${currentPage} / ${totalPages}`;
-            counterEl.title = `Strona ${currentPage} z ${totalPages} (znormalizowana). Kliknij, aby zmienić tryb.`;
             return;
         }
     }
