@@ -30,6 +30,19 @@
     -webkit-user-select: none;
 }
 
+/* Transparent Touch Overlay for Reader */
+#jellyfinReaderTouchOverlay {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 500; /* Above book canvas (10), below OSD toolbars (1002) */
+    background: transparent;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
 /* Reader OSD Mode Toggle Button */
 .reader-mode-toggle-btn {
     display: inline-flex !important;
