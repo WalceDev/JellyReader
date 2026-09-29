@@ -116,6 +116,10 @@
     // Helper to replace an existing logo (svg or img) with JellyReader book logo
     function replaceLogoElement(targetEl) {
         if (!targetEl || targetEl.dataset.jellyreaderCustom) return;
+        // Absolute safety guard: NEVER touch the back button or navigation buttons
+        if (targetEl.closest('.headerBackButton, [data-action="back"], button[title*="Wstecz"], button[title*="Back"], .paper-icon-button-light.headerBackButton')) {
+            return;
+        }
         targetEl.dataset.jellyreaderCustom = 'true';
 
         if (targetEl.tagName.toLowerCase() === 'img') {
@@ -161,9 +165,13 @@
         // B. Strategy 1: Replace any SVG that matches the unique Jellyfin logo brand signature
         // ONLY matches #aa5cc3 (purple gradient) or geometric path coordinates.
         // NEVER matches #00a4dc (generic cyan accent) or Material Design icons.
+        // NEVER touches the back button.
         const allSvgs = document.querySelectorAll('svg');
         allSvgs.forEach(svg => {
             if (svg.dataset.jellyreaderCustom) return;
+            if (svg.closest('.headerBackButton, [data-action="back"], button[title*="Wstecz"], button[title*="Back"], .paper-icon-button-light.headerBackButton')) {
+                return;
+            }
             const content = ((svg.innerHTML || '') + ' ' + (svg.outerHTML || '')).toLowerCase();
             if (content.includes('aa5cc3') || 
                 content.includes('inner-shape') || 
@@ -177,30 +185,33 @@
         });
 
         // C. Strategy 2: Directly find the server header row by text content ("MINTPC" / "12.0")
-        // Traverses text nodes to find exact matches for server name or version
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-        let node;
-        while ((node = walker.nextNode())) {
-            const text = node.textContent.trim();
-            if (text === '12.0' || text === 'MINTPC') {
-                // Find the nearest row container holding both the text and the icon
-                let row = node.parentElement;
-                let depth = 0;
-                while (row && row !== document.body && depth < 5) {
-                    const rowText = (row.textContent || '').trim();
-                    // Must be a small header row (< 60 chars) and not the entire page/drawer
-                    if (rowText.length < 60 && (rowText.includes('MINTPC') || rowText.includes('12.0'))) {
-                        const icon = row.querySelector('svg, img');
-                        if (icon && !icon.dataset.jellyreaderCustom) {
-                            replaceLogoElement(icon);
-                            break;
+        // STRICTLY scoped inside drawer / sidebar containers only (never touches the top header bar!)
+        const drawers = document.querySelectorAll('.mainDrawer, .adminDrawer, .sidebar, aside, [data-role="panel"], .navDrawer');
+        drawers.forEach(drawer => {
+            const walker = document.createTreeWalker(drawer, NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = walker.nextNode())) {
+                const text = node.textContent.trim();
+                if (text === '12.0' || text === 'MINTPC') {
+                    // Find the nearest row container holding both the text and the icon
+                    let row = node.parentElement;
+                    let depth = 0;
+                    while (row && row !== drawer && depth < 5) {
+                        const rowText = (row.textContent || '').trim();
+                        // Must be a small header row (< 60 chars) and not the entire page/drawer
+                        if (rowText.length < 60 && (rowText.includes('MINTPC') || rowText.includes('12.0'))) {
+                            const icon = row.querySelector('svg, img');
+                            if (icon && !icon.dataset.jellyreaderCustom) {
+                                replaceLogoElement(icon);
+                                break;
+                            }
                         }
+                        row = row.parentElement;
+                        depth++;
                     }
-                    row = row.parentElement;
-                    depth++;
                 }
             }
-        }
+        });
 
         // D. Strategy 3: Dedicated drawer logo classes if present
         const drawerLogos = document.querySelectorAll('.adminDrawerLogo, .mainDrawerLogo, .mainDrawerLogoImage, .sidebarLogo');
