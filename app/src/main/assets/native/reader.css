@@ -127,14 +127,28 @@
 /* Custom JellyReader Branding in Web Client */
 .splashLogo,
 .splashLogoContainer img,
+.splashScreen img,
+img.splashLogo,
+#splashLogo {
+    content: url('/native/reader_icon.png') !important;
+    background-image: url('/native/reader_icon.png') !important;
+    object-fit: contain !important;
+    background-size: contain !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    max-width: 60vw !important;
+    max-height: 25vh !important;
+    width: auto !important;
+    height: auto !important;
+}
+
 .mainDrawerLogoImage,
 .mainDrawerLogo img,
 .adminDrawerLogo,
-.adminDrawerLogo img {
+.adminDrawerLogo img,
+.sidebarLogo img,
+.jellyreader-drawer-logo {
     content: url('/native/reader_icon.png') !important;
-}
-
-.splashLogo {
-    background-image: url('/native/reader_icon.png') !important;
+    object-fit: contain !important;
 }
 
