@@ -142,15 +142,22 @@ img.splashLogo,
     height: auto !important;
 }
 
+.jellyreader-replaced-logo,
+img.jellyreader-replaced-logo,
 .mainDrawer .jellyreader-drawer-logo,
-.mainDrawer .jellyreader-replaced-logo {
+.mainDrawer .jellyreader-replaced-logo,
+.adminDrawer .jellyreader-replaced-logo,
+.sidebar .jellyreader-replaced-logo {
     width: 48px !important;
     height: 48px !important;
     min-width: 44px !important;
     min-height: 44px !important;
+    max-width: 54px !important;
+    max-height: 54px !important;
     object-fit: contain !important;
     display: inline-block !important;
     vertical-align: middle !important;
     margin-right: 12px !important;
 }
+
 

@@ -113,6 +113,41 @@
         });
     }
 
+    // Helper to replace an existing logo (svg or img) with JellyReader book logo
+    function replaceLogoElement(targetEl) {
+        if (!targetEl || targetEl.dataset.jellyreaderCustom) return;
+        targetEl.dataset.jellyreaderCustom = 'true';
+
+        if (targetEl.tagName.toLowerCase() === 'img') {
+            targetEl.src = '/native/reader_icon.png';
+            targetEl.style.width = '48px';
+            targetEl.style.height = '48px';
+            targetEl.style.minWidth = '44px';
+            targetEl.style.minHeight = '44px';
+            targetEl.style.objectFit = 'contain';
+            targetEl.style.marginRight = '12px';
+            targetEl.style.verticalAlign = 'middle';
+            targetEl.style.display = 'inline-block';
+        } else {
+            const newImg = document.createElement('img');
+            newImg.src = '/native/reader_icon.png';
+            newImg.style.width = '48px';
+            newImg.style.height = '48px';
+            newImg.style.minWidth = '44px';
+            newImg.style.minHeight = '44px';
+            newImg.style.objectFit = 'contain';
+            newImg.style.marginRight = '12px';
+            newImg.style.verticalAlign = 'middle';
+            newImg.style.display = 'inline-block';
+            newImg.className = (targetEl.getAttribute('class') || '') + ' jellyreader-replaced-logo';
+            newImg.dataset.jellyreaderCustom = 'true';
+            if (targetEl.parentNode) {
+                targetEl.parentNode.replaceChild(newImg, targetEl);
+            }
+        }
+        console.log('[JellyReader] Successfully replaced logo with 48px JellyReader book');
+    }
+
     // 4. JellyReader Branding: Surgical Drawer & Splash Logo Replacer
     function applyJellyReaderBranding() {
         // A. Fix splash logo aspect ratio if present (only on splash screen)
@@ -123,42 +158,59 @@
             el.style.maxHeight = '140px';
         });
 
-        // B. ONLY target the navigation drawer (.mainDrawer) - never touch other pages
-        const drawer = document.querySelector('.mainDrawer');
-        if (!drawer) return; // Exit immediately if drawer is not present
+        // B. Strategy 1: Replace any SVG that matches the unique Jellyfin logo brand signature
+        // ONLY matches #aa5cc3 (purple gradient) or geometric path coordinates.
+        // NEVER matches #00a4dc (generic cyan accent) or Material Design icons.
+        const allSvgs = document.querySelectorAll('svg');
+        allSvgs.forEach(svg => {
+            if (svg.dataset.jellyreaderCustom) return;
+            const content = ((svg.innerHTML || '') + ' ' + (svg.outerHTML || '')).toLowerCase();
+            if (content.includes('aa5cc3') || 
+                content.includes('inner-shape') || 
+                content.includes('outer-shape') || 
+                content.includes('banner-logo') || 
+                content.includes('icon-solid') || 
+                content.includes('201.62') || 
+                content.includes('359.43')) {
+                replaceLogoElement(svg);
+            }
+        });
 
-        // Find the server row at the very top of the drawer (first item/button)
-        const firstNavOption = drawer.querySelector('.navMenuOption, .mainDrawerButton, .sidebarHeaderButton, a, button');
-        if (firstNavOption && !firstNavOption.dataset.jellyreaderCustom) {
-            const text = (firstNavOption.textContent || '').trim();
-            // Verify it is the server row (contains version number or server name or is the first menu option)
-            if (/\d+\.\d+/.test(text) || text.includes('MINTPC') || firstNavOption.classList.contains('sidebarHeaderButton') || firstNavOption === drawer.querySelector('.navMenuOption')) {
-                const icon = firstNavOption.querySelector('svg, img');
-                if (icon && !icon.dataset.jellyreaderCustom) {
-                    firstNavOption.dataset.jellyreaderCustom = 'true';
-                    icon.dataset.jellyreaderCustom = 'true';
-                    if (icon.tagName.toLowerCase() === 'img') {
-                        icon.src = '/native/reader_icon.png';
-                        icon.style.width = '48px';
-                        icon.style.height = '48px';
-                        icon.style.minWidth = '44px';
-                        icon.style.objectFit = 'contain';
-                    } else {
-                        const newImg = document.createElement('img');
-                        newImg.src = '/native/reader_icon.png';
-                        newImg.style.width = '48px';
-                        newImg.style.height = '48px';
-                        newImg.style.minWidth = '44px';
-                        newImg.style.objectFit = 'contain';
-                        newImg.style.marginRight = '12px';
-                        newImg.className = 'jellyreader-replaced-logo';
-                        newImg.dataset.jellyreaderCustom = 'true';
-                        icon.parentNode.replaceChild(newImg, icon);
+        // C. Strategy 2: Directly find the server header row by text content ("MINTPC" / "12.0")
+        // Traverses text nodes to find exact matches for server name or version
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            const text = node.textContent.trim();
+            if (text === '12.0' || text === 'MINTPC') {
+                // Find the nearest row container holding both the text and the icon
+                let row = node.parentElement;
+                let depth = 0;
+                while (row && row !== document.body && depth < 5) {
+                    const rowText = (row.textContent || '').trim();
+                    // Must be a small header row (< 60 chars) and not the entire page/drawer
+                    if (rowText.length < 60 && (rowText.includes('MINTPC') || rowText.includes('12.0'))) {
+                        const icon = row.querySelector('svg, img');
+                        if (icon && !icon.dataset.jellyreaderCustom) {
+                            replaceLogoElement(icon);
+                            break;
+                        }
                     }
-                    console.log('[JellyReader] Successfully replaced drawer server header logo (48px)');
+                    row = row.parentElement;
+                    depth++;
                 }
             }
         }
+
+        // D. Strategy 3: Dedicated drawer logo classes if present
+        const drawerLogos = document.querySelectorAll('.adminDrawerLogo, .mainDrawerLogo, .mainDrawerLogoImage, .sidebarLogo');
+        drawerLogos.forEach(el => {
+            if (el.dataset.jellyreaderCustom) return;
+            const icon = el.querySelector('svg, img') || el;
+            if (icon && !icon.dataset.jellyreaderCustom) {
+                replaceLogoElement(icon);
+            }
+        });
     }
 
     // Set up MutationObserver to detect drawer openings and DOM changes
@@ -170,24 +222,25 @@
     // Also trigger on click (e.g. hamburger button opening the drawer)
     document.addEventListener('click', () => {
         setTimeout(applyJellyReaderBranding, 50);
-        setTimeout(applyJellyReaderBranding, 250);
+        setTimeout(applyJellyReaderBranding, 200);
+        setTimeout(applyJellyReaderBranding, 500);
     }, true);
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             cleanupNavigation();
             applyJellyReaderBranding();
-            observer.observe(document.body, { childList: true, subtree: true });
+            observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
         });
     } else {
         cleanupNavigation();
         applyJellyReaderBranding();
-        observer.observe(document.body, { childList: true, subtree: true });
+        observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
     }
 
     // Interval checks for initial load period
-    const initTimer = setInterval(applyJellyReaderBranding, 300);
-    setTimeout(() => clearInterval(initTimer), 6000);
+    const initTimer = setInterval(applyJellyReaderBranding, 250);
+    setTimeout(() => clearInterval(initTimer), 10000);
 
     console.log('[JellyfinReader] Safe Books-Only filter & branding engine ready.');
 })();
