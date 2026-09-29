@@ -142,21 +142,15 @@ img.splashLogo,
     height: auto !important;
 }
 
-.mainDrawerLogoImage,
-.mainDrawerLogo img,
-.adminDrawerLogo,
-.adminDrawerLogo img,
-.sidebarLogo img,
-.jellyreader-drawer-logo,
-.jellyreader-replaced-logo {
-    content: url('/native/reader_icon.png') !important;
-    width: 50px !important;
-    height: 50px !important;
-    min-width: 46px !important;
-    min-height: 46px !important;
+.mainDrawer .jellyreader-drawer-logo,
+.mainDrawer .jellyreader-replaced-logo {
+    width: 48px !important;
+    height: 48px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
     object-fit: contain !important;
     display: inline-block !important;
     vertical-align: middle !important;
-    margin-right: 8px !important;
+    margin-right: 12px !important;
 }
 

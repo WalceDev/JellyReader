@@ -113,9 +113,9 @@
         });
     }
 
-    // 4. JellyReader Branding: Dynamic Drawer & Splash Logo Replacer
+    // 4. JellyReader Branding: Surgical Drawer & Splash Logo Replacer
     function applyJellyReaderBranding() {
-        // A. Fix splash logo aspect ratio if present
+        // A. Fix splash logo aspect ratio if present (only on splash screen)
         const splashLogos = document.querySelectorAll('.splashLogo, #splashLogo, .splashLogoContainer img, .splashScreen img');
         splashLogos.forEach(el => {
             el.style.objectFit = 'contain';
@@ -123,90 +123,42 @@
             el.style.maxHeight = '140px';
         });
 
-        // B. Target ANY SVG in the document containing Jellyfin logo gradient or paths
-        const svgs = document.querySelectorAll('svg');
-        svgs.forEach(svg => {
-            if (svg.dataset.jellyreaderCustom) return;
-            const svgText = (svg.innerHTML + ' ' + (svg.getAttribute('viewBox') || '')).toLowerCase();
-            // Jellyfin brand gradient hex codes: #aa5cc3, #00a4dc or recognizable path coordinates
-            if (svgText.includes('aa5cc3') || svgText.includes('00a4dc') || svgText.includes('284.789') || svgText.includes('201.62')) {
-                svg.dataset.jellyreaderCustom = 'true';
-                const img = document.createElement('img');
-                img.src = '/native/reader_icon.png';
-                img.style.width = '50px';
-                img.style.height = '50px';
-                img.style.minWidth = '46px';
-                img.style.objectFit = 'contain';
-                img.style.display = 'inline-block';
-                img.style.verticalAlign = 'middle';
-                img.style.marginRight = '8px';
-                img.className = (svg.getAttribute('class') || '') + ' jellyreader-replaced-logo';
-                img.dataset.jellyreaderCustom = 'true';
-                svg.parentNode.replaceChild(img, svg);
-                console.log('[JellyReader] Successfully replaced Jellyfin SVG logo with reader_icon.png (50px)');
-            }
-        });
+        // B. ONLY target the navigation drawer (.mainDrawer) - never touch other pages
+        const drawer = document.querySelector('.mainDrawer');
+        if (!drawer) return; // Exit immediately if drawer is not present
 
-        // C. Target any server info header (e.g. element containing version or server name)
-        const allElements = document.querySelectorAll('button, a, div, span, p');
-        for (let i = 0; i < allElements.length; i++) {
-            const el = allElements[i];
-            const text = el.textContent ? el.textContent.trim() : '';
-            // If element has version text like 10.x, 11.x, 12.x or server name
-            if (text && (/\b\d+\.\d+(\.\d+)?\b/.test(text) || text === 'MINTPC')) {
-                const container = el.closest('button, a, .navMenuOption, [class*="Header"], [class*="header"]') || el.parentElement;
-                if (container && !container.dataset.jellyreaderHeaderChecked) {
-                    container.dataset.jellyreaderHeaderChecked = 'true';
-                    const icon = container.querySelector('svg, img, [class*="logo"], [class*="icon"], [class*="Logo"]');
-                    if (icon && !icon.dataset.jellyreaderCustom) {
-                        icon.dataset.jellyreaderCustom = 'true';
-                        if (icon.tagName.toLowerCase() === 'img') {
-                            icon.src = '/native/reader_icon.png';
-                            icon.style.width = '50px';
-                            icon.style.height = '50px';
-                            icon.style.minWidth = '46px';
-                            icon.style.objectFit = 'contain';
-                        } else {
-                            const img = document.createElement('img');
-                            img.src = '/native/reader_icon.png';
-                            img.style.width = '50px';
-                            img.style.height = '50px';
-                            img.style.minWidth = '46px';
-                            img.style.objectFit = 'contain';
-                            img.style.marginRight = '8px';
-                            img.className = 'jellyreader-replaced-logo';
-                            img.dataset.jellyreaderCustom = 'true';
-                            icon.parentNode.replaceChild(img, icon);
-                        }
-                        console.log('[JellyReader] Replaced server header icon next to version:', text);
+        // Find the server row at the very top of the drawer (first item/button)
+        const firstNavOption = drawer.querySelector('.navMenuOption, .mainDrawerButton, .sidebarHeaderButton, a, button');
+        if (firstNavOption && !firstNavOption.dataset.jellyreaderCustom) {
+            const text = (firstNavOption.textContent || '').trim();
+            // Verify it is the server row (contains version number or server name or is the first menu option)
+            if (/\d+\.\d+/.test(text) || text.includes('MINTPC') || firstNavOption.classList.contains('sidebarHeaderButton') || firstNavOption === drawer.querySelector('.navMenuOption')) {
+                const icon = firstNavOption.querySelector('svg, img');
+                if (icon && !icon.dataset.jellyreaderCustom) {
+                    firstNavOption.dataset.jellyreaderCustom = 'true';
+                    icon.dataset.jellyreaderCustom = 'true';
+                    if (icon.tagName.toLowerCase() === 'img') {
+                        icon.src = '/native/reader_icon.png';
+                        icon.style.width = '48px';
+                        icon.style.height = '48px';
+                        icon.style.minWidth = '44px';
+                        icon.style.objectFit = 'contain';
+                    } else {
+                        const newImg = document.createElement('img');
+                        newImg.src = '/native/reader_icon.png';
+                        newImg.style.width = '48px';
+                        newImg.style.height = '48px';
+                        newImg.style.minWidth = '44px';
+                        newImg.style.objectFit = 'contain';
+                        newImg.style.marginRight = '12px';
+                        newImg.className = 'jellyreader-replaced-logo';
+                        newImg.dataset.jellyreaderCustom = 'true';
+                        icon.parentNode.replaceChild(newImg, icon);
                     }
+                    console.log('[JellyReader] Successfully replaced drawer server header logo (48px)');
                 }
             }
         }
-
-        // D. Target all known logo classes in header or drawer
-        const logoCandidates = document.querySelectorAll('[class*="mainDrawer"] [class*="logo"], [class*="sidebar"] [class*="logo"], [class*="drawer"] [class*="logo"], [class*="navMenu"] [class*="logo"], .mainDrawerLogo, .sidebarLogo, .adminDrawerLogo');
-        logoCandidates.forEach(el => {
-            if (el.dataset.jellyreaderCustom) return;
-            el.dataset.jellyreaderCustom = 'true';
-            const imgOrSvg = el.querySelector('img, svg') || el;
-            if (imgOrSvg.tagName.toLowerCase() === 'img') {
-                imgOrSvg.src = '/native/reader_icon.png';
-                imgOrSvg.style.width = '50px';
-                imgOrSvg.style.height = '50px';
-                imgOrSvg.style.objectFit = 'contain';
-            } else if (imgOrSvg.tagName.toLowerCase() === 'svg') {
-                const img = document.createElement('img');
-                img.src = '/native/reader_icon.png';
-                img.style.width = '50px';
-                img.style.height = '50px';
-                img.style.minWidth = '46px';
-                img.style.objectFit = 'contain';
-                img.className = 'jellyreader-replaced-logo';
-                img.dataset.jellyreaderCustom = 'true';
-                imgOrSvg.parentNode.replaceChild(img, imgOrSvg);
-            }
-        });
     }
 
     // Set up MutationObserver to detect drawer openings and DOM changes
