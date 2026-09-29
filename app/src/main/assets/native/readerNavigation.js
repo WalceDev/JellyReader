@@ -239,14 +239,66 @@
     }
 
     let currentBookStructure = null;
+    let isCalculatingStructure = false;
+
+    function getBookId(player) {
+        return player?.currentItem?.Id ||
+               player?.currentItem?.Name ||
+               player?.book?.packaging?.metadata?.title ||
+               'current_book';
+    }
+
+    function getSpineItems(book) {
+        if (!book) return [];
+        if (Array.isArray(book.spine?.items) && book.spine.items.length > 0) {
+            return book.spine.items;
+        }
+        if (Array.isArray(book.spine?.spineItems) && book.spine.spineItems.length > 0) {
+            return book.spine.spineItems;
+        }
+        if (Array.isArray(book.spine) && book.spine.length > 0) {
+            return book.spine;
+        }
+        if (Array.isArray(book.sectionList) && book.sectionList.length > 0) {
+            return book.sectionList;
+        }
+        return [];
+    }
 
     // Calculate exact readable character counts of all chapters from in-memory zip
-    function calculateExactBookStructure(player) {
-        if (!player || !player.book) return;
+    async function calculateExactBookStructure(player) {
+        if (!player || !player.book || isCalculatingStructure) return;
         const book = player.book;
-        const spine = book.spine;
-        const items = spine?.items;
-        if (!items || items.length === 0) return;
+
+        // Check localStorage cache first
+        const bookId = getBookId(player);
+        const cacheKey = 'jellyfin_book_exact_chars_' + bookId;
+        try {
+            const cachedJson = localStorage.getItem(cacheKey);
+            if (cachedJson) {
+                const cached = JSON.parse(cachedJson);
+                if (cached && cached.totalChars > 10000 && cached.totalPages > 10) {
+                    currentBookStructure = cached;
+                    console.log('[JellyfinReader] Loaded exact book structure from cache:', cached);
+                    updateCounterDisplay();
+                    return;
+                }
+            }
+        } catch (e) {}
+
+        // Wait for book to be loaded
+        const loadPromise = book.loaded || book.opened || Promise.resolve();
+        try {
+            await loadPromise;
+        } catch (e) {}
+
+        const items = getSpineItems(book);
+        if (!items || items.length === 0) {
+            return;
+        }
+
+        isCalculatingStructure = true;
+        console.log('[JellyfinReader] Calculating exact character counts for', items.length, 'chapters...');
 
         const zip = book.archive?.zip;
         const chapters = [];
@@ -262,37 +314,53 @@
                     if (path.endsWith(cleanHref) || (item.idref && path.includes(item.idref))) {
                         try {
                             const file = zip.files[path];
-                            if (typeof file.asText === 'function') {
-                                const raw = file.asText();
+                            let raw = null;
+                            if (typeof file.async === 'function') {
+                                raw = await file.async("string");
+                            } else if (typeof file.asText === 'function') {
+                                raw = file.asText();
+                            }
+                            if (raw) {
                                 const clean = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
                                 chars = clean.length;
                             }
-                        } catch (e) {}
+                        } catch (e) {
+                            console.warn('[JellyfinReader] Error reading zip entry:', path, e);
+                        }
                         if (chars > 0) break;
                     }
                 }
-            }
-
-            if (chars <= 0) {
-                chars = 25000; // sensible default for regular novel chapter
             }
 
             chapters.push({ index: i, chars: chars, href: item.href });
             totalChars += chars;
         }
 
+        isCalculatingStructure = false;
+
+        if (totalChars <= 0) {
+            console.warn('[JellyfinReader] Could not extract chapter text from zip yet.');
+            return;
+        }
+
+        const totalPages = Math.max(1, Math.round(totalChars / 1800));
+
         currentBookStructure = {
             chapters: chapters,
             totalChars: totalChars,
             totalChapters: items.length,
-            totalPages: Math.max(1, Math.round(totalChars / 1800))
+            totalPages: totalPages
         };
 
-        console.log('[JellyfinReader] Exact book structure calculated:', {
-            totalChapters: items.length,
+        console.log('[JellyfinReader] Exact book structure calculation finished!', {
+            chapters: items.length,
             totalChars: totalChars,
-            totalPages: currentBookStructure.totalPages
+            totalPages: totalPages
         });
+
+        try {
+            localStorage.setItem(cacheKey, JSON.stringify(currentBookStructure));
+        } catch (e) {}
 
         updateCounterDisplay();
     }
@@ -366,14 +434,8 @@
             lastLocationData = null;
         }
 
-        // Wait for full spine of chapters before calculating structure
         if (player.book && !currentBookStructure) {
-            const spinePromise = player.book.loaded?.spine || Promise.resolve();
-            spinePromise.then(() => {
-                calculateExactBookStructure(player);
-            }).catch(() => {
-                calculateExactBookStructure(player);
-            });
+            calculateExactBookStructure(player);
         }
 
         // Hook rendition relocated event
