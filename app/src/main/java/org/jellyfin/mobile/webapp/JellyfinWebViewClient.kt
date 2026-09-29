@@ -50,6 +50,17 @@ abstract class JellyfinWebViewClient(
             }
             // Load injected scripts from application assets
             path.contains("/native/") -> assetsPathHandler.inject("native/${url.lastPathSegment}")
+            // Intercept webapp splash and drawer logo
+            path.endsWith("icon-transparent.png") ||
+                path.endsWith("banner-light.png") ||
+                path.endsWith("banner-dark.png") ||
+                path.endsWith("touchicon.png") ||
+                path.endsWith("touchicon180.png") ||
+                path.endsWith("touchicon512.png") ||
+                path.endsWith("favicon.png") ||
+                path.endsWith("favicon.ico") -> {
+                assetsPathHandler.inject("native/reader_icon.png")
+            }
             // Load the chrome.cast.js library instead
             path.endsWith(Constants.CAST_SDK_PATH) -> assetsPathHandler.inject("native/chrome.cast.js")
             path.endsWith(Constants.SESSION_CAPABILITIES_PATH) -> {

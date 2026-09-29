@@ -88,5 +88,7 @@ fun WebViewAssetLoader.AssetsPathHandler.inject(path: String): WebResourceRespon
         mimeType = "application/javascript"
     } else if (path.endsWith(".css", ignoreCase = true)) {
         mimeType = "text/css"
+    } else if (path.endsWith(".png", ignoreCase = true)) {
+        mimeType = "image/png"
     }
 }
