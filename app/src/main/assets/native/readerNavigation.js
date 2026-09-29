@@ -4,7 +4,7 @@
  * 1. Safe timeout for suppressClick (prevents hanging clicks)
  * 2. Footnote / link passthrough (preserves internal links)
  * 3. Text selection guard (long-press won't flip pages)
- * 4. OSD visibility guard (tapping closes OSD without flipping pages underneath)
+ * 4. OSD auto-close on page turn (flips page and hides OSD immediately)
  * 5. Dynamic screen width on rotation
  * 6. Continuous chapter re-hooking
  */
@@ -54,12 +54,19 @@
         return row.style.opacity !== '0';
     }
 
+    function closeOsdIfVisible() {
+        if (isOsdVisible()) {
+            document.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        }
+    }
+
     function safeNext(player) {
         const now = Date.now();
         if (now - lastTurnTime < COOLDOWN_MS) return;
         lastTurnTime = now;
         if (player && typeof player.next === 'function') {
             player.next();
+            closeOsdIfVisible();
         }
     }
 
@@ -69,6 +76,7 @@
         lastTurnTime = now;
         if (player && typeof player.previous === 'function') {
             player.previous();
+            closeOsdIfVisible();
         }
     }
 
@@ -147,12 +155,6 @@
 
             const absX = Math.abs(deltaX);
             const absY = Math.abs(deltaY);
-
-            // Safeguard 4: If OSD is currently visible, tapping closes OSD without flipping pages
-            if (isOsdVisible()) {
-                suppressClick = false;
-                return;
-            }
 
             const activeMode = localStorage.getItem(STORAGE_KEY) || 'gesture';
 
