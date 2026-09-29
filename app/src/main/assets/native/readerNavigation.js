@@ -242,10 +242,18 @@
     let isCalculatingStructure = false;
     let calcStatus = 'Inicjalizacja';
 
+    function getPlayerBook(player) {
+        return player?.rendition?.book || player?.book || null;
+    }
+
     function getBookId(player) {
-        return player?.currentItem?.Id ||
-               player?.currentItem?.Name ||
-               player?.book?.packaging?.metadata?.title ||
+        const book = getPlayerBook(player);
+        const item = (typeof player?.currentItem === 'function')
+            ? player.currentItem()
+            : (player?.currentItem || player?.item);
+        return item?.Id ||
+               item?.Name ||
+               book?.packaging?.metadata?.title ||
                'current_book';
     }
 
@@ -268,8 +276,8 @@
 
     // Calculate exact readable character counts of all chapters using section.load or zip
     async function calculateExactBookStructure(player) {
-        if (!player || !player.book || isCalculatingStructure) return;
-        const book = player.book;
+        const book = getPlayerBook(player);
+        if (!player || !book || isCalculatingStructure) return;
 
         // Check localStorage cache first
         const bookId = getBookId(player);
@@ -396,6 +404,23 @@
         isCalculatingStructure = false;
 
         if (totalChars <= 0) {
+            // Method 3: Fallback to book.locations if available (Jellyfin Web generates locations(1024))
+            try {
+                const locCount = (typeof book.locations?.length === 'function')
+                    ? book.locations.length()
+                    : (book.locations?.total || 0);
+                if (locCount > 0) {
+                    totalChars = locCount * 1024;
+                    const avgPerChap = Math.max(1, Math.round(totalChars / items.length));
+                    for (let i = 0; i < items.length; i++) {
+                        chapters.push({ index: i, chars: avgPerChap, href: items[i].href });
+                    }
+                    console.log('[JellyfinReader] Extracted book size from book.locations:', totalChars);
+                }
+            } catch (e) {}
+        }
+
+        if (totalChars <= 0) {
             calcStatus = 'Błąd: 0 znaków (brak dostępu do tekstu)';
             console.warn('[JellyfinReader] Could not extract chapter text from book.');
             return;
@@ -487,14 +512,16 @@
         if (!player) return;
         activeBookPlayer = player;
 
+        const book = getPlayerBook(player);
+
         // Reset if a new book instance is loaded
-        if (player.book && player.book !== currentBookInstance) {
-            currentBookInstance = player.book;
+        if (book && book !== currentBookInstance) {
+            currentBookInstance = book;
             currentBookStructure = null;
             lastLocationData = null;
         }
 
-        if (player.book && !currentBookStructure) {
+        if (book && !currentBookStructure && !isCalculatingStructure) {
             calculateExactBookStructure(player);
         }
 
@@ -523,7 +550,8 @@
         if (!location || !location.start) return;
         lastLocationData = location;
 
-        if (!currentBookStructure && player.book) {
+        const book = getPlayerBook(player);
+        if (!currentBookStructure && book && !isCalculatingStructure) {
             calculateExactBookStructure(player);
         }
 
@@ -535,7 +563,7 @@
         if (!counterEl) return;
 
         const player = activeBookPlayer;
-        const book = player?.book;
+        const book = getPlayerBook(player);
         const loc = lastLocationData;
         const start = loc?.start;
 
@@ -649,6 +677,11 @@
             : `[${calcStatus || 'Inicjalizacja'}]`;
 
         showToast(`${modeLabel} ${debugInfo}`);
+
+        if (!currentBookStructure && !isCalculatingStructure && activeBookPlayer) {
+            calculateExactBookStructure(activeBookPlayer);
+        }
+
         updateCounterDisplay();
     }
 
