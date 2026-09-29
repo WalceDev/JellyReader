@@ -240,6 +240,7 @@
 
     let currentBookStructure = null;
     let isCalculatingStructure = false;
+    let calcStatus = 'Inicjalizacja';
 
     function getBookId(player) {
         return player?.currentItem?.Id ||
@@ -265,7 +266,7 @@
         return [];
     }
 
-    // Calculate exact readable character counts of all chapters from in-memory zip
+    // Calculate exact readable character counts of all chapters using section.load or zip
     async function calculateExactBookStructure(player) {
         if (!player || !player.book || isCalculatingStructure) return;
         const book = player.book;
@@ -277,8 +278,9 @@
             const cachedJson = localStorage.getItem(cacheKey);
             if (cachedJson) {
                 const cached = JSON.parse(cachedJson);
-                if (cached && cached.totalChars > 10000 && cached.totalPages > 10) {
+                if (cached && cached.totalChars > 10000 && cached.totalPages > 5) {
                     currentBookStructure = cached;
+                    calcStatus = `Z pamięci (${Math.round(cached.totalChars / 1000)}k znaków)`;
                     console.log('[JellyfinReader] Loaded exact book structure from cache:', cached);
                     updateCounterDisplay();
                     return;
@@ -286,18 +288,32 @@
             }
         } catch (e) {}
 
-        // Wait for book to be loaded
-        const loadPromise = book.loaded || book.opened || Promise.resolve();
+        // Wait for book / spine to be ready
+        calcStatus = 'Oczekiwanie na książkę...';
         try {
-            await loadPromise;
+            if (book.loaded?.spine) {
+                await book.loaded.spine;
+            } else if (book.ready) {
+                await book.ready;
+            } else if (book.opened) {
+                await book.opened;
+            }
         } catch (e) {}
 
-        const items = getSpineItems(book);
+        let items = getSpineItems(book);
         if (!items || items.length === 0) {
+            calcStatus = 'Oczekiwanie na spis rozdziałów...';
+            // Retry after short delay if spine is still loading
+            setTimeout(() => {
+                if (!currentBookStructure && !isCalculatingStructure && activeBookPlayer) {
+                    calculateExactBookStructure(activeBookPlayer);
+                }
+            }, 1000);
             return;
         }
 
         isCalculatingStructure = true;
+        calcStatus = `Analiza ${items.length} rozdziałów...`;
         console.log('[JellyfinReader] Calculating exact character counts for', items.length, 'chapters...');
 
         const zip = book.archive?.zip;
@@ -308,7 +324,43 @@
             const item = items[i];
             let chars = 0;
 
-            if (zip && zip.files) {
+            calcStatus = `Czytanie rozdz. ${i + 1}/${items.length}...`;
+
+            // Method 1: Use epub.js Section loader (universal for zip, http, stream)
+            try {
+                const section = (typeof book.spine?.get === 'function')
+                    ? (book.spine.get(item.href || item.idref || i) || item)
+                    : item;
+
+                let doc = null;
+                if (typeof section.load === 'function') {
+                    const loadFn = (book.load ? book.load.bind(book) : undefined);
+                    doc = await section.load(loadFn);
+                } else if (typeof book.load === 'function' && (section.href || item.href)) {
+                    doc = await book.load(section.href || item.href);
+                }
+
+                if (doc) {
+                    let text = '';
+                    if (typeof doc === 'string') {
+                        text = doc.replace(/<[^>]+>/g, ' ');
+                    } else if (doc.body) {
+                        text = doc.body.textContent || '';
+                    } else if (doc.documentElement) {
+                        text = doc.documentElement.textContent || '';
+                    }
+                    chars = text.replace(/\s+/g, ' ').trim().length;
+                }
+
+                if (typeof section.unload === 'function') {
+                    try { section.unload(); } catch (e) {}
+                }
+            } catch (err) {
+                console.warn('[JellyfinReader] section.load failed for chapter', i, err);
+            }
+
+            // Method 2: Fallback to JSZip if section.load yielded 0
+            if (chars === 0 && zip && zip.files) {
                 const cleanHref = (item.href || '').replace(/^\//, '');
                 for (const path in zip.files) {
                     if (path.endsWith(cleanHref) || (item.idref && path.includes(item.idref))) {
@@ -334,12 +386,18 @@
 
             chapters.push({ index: i, chars: chars, href: item.href });
             totalChars += chars;
+
+            // Yield UI thread every 2 chapters to keep WebView responsive
+            if (i % 2 === 0) {
+                await new Promise(r => setTimeout(r, 15));
+            }
         }
 
         isCalculatingStructure = false;
 
         if (totalChars <= 0) {
-            console.warn('[JellyfinReader] Could not extract chapter text from zip yet.');
+            calcStatus = 'Błąd: 0 znaków (brak dostępu do tekstu)';
+            console.warn('[JellyfinReader] Could not extract chapter text from book.');
             return;
         }
 
@@ -351,6 +409,8 @@
             totalChapters: items.length,
             totalPages: totalPages
         };
+
+        calcStatus = `Gotowe: ${totalPages} str. (${Math.round(totalChars / 1000)}k znaków)`;
 
         console.log('[JellyfinReader] Exact book structure calculation finished!', {
             chapters: items.length,
@@ -571,17 +631,24 @@
     }
 
     function cycleCounterMode() {
+        let modeLabel = '';
         if (currentCounterMode === 'relative') {
             currentCounterMode = 'absolute';
-            showToast('Tryb: Strony znormalizowane');
+            modeLabel = 'Tryb: Strony znormalizowane';
         } else if (currentCounterMode === 'absolute') {
             currentCounterMode = 'percent';
-            showToast('Tryb: Procent ukończenia');
+            modeLabel = 'Tryb: Procent ukończenia';
         } else {
             currentCounterMode = 'relative';
-            showToast('Tryb: Ekrany urządzenia (cała książka)');
+            modeLabel = 'Tryb: Ekrany urządzenia (cała książka)';
         }
         localStorage.setItem(COUNTER_STORAGE_KEY, currentCounterMode);
+
+        const debugInfo = currentBookStructure
+            ? `[Rozdz: ${currentBookStructure.totalChapters}, Znaki: ${Math.round(currentBookStructure.totalChars / 1000)}k, Str: ${currentBookStructure.totalPages}]`
+            : `[${calcStatus || 'Inicjalizacja'}]`;
+
+        showToast(`${modeLabel} ${debugInfo}`);
         updateCounterDisplay();
     }
 
