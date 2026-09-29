@@ -133,18 +133,17 @@
                 svg.dataset.jellyreaderCustom = 'true';
                 const img = document.createElement('img');
                 img.src = '/native/reader_icon.png';
-                const rect = svg.getBoundingClientRect();
-                const w = (rect.width > 12 && rect.width < 250) ? rect.width : 38;
-                const h = (rect.height > 12 && rect.height < 250) ? rect.height : 38;
-                img.style.width = w + 'px';
-                img.style.height = h + 'px';
+                img.style.width = '50px';
+                img.style.height = '50px';
+                img.style.minWidth = '46px';
                 img.style.objectFit = 'contain';
                 img.style.display = 'inline-block';
                 img.style.verticalAlign = 'middle';
+                img.style.marginRight = '8px';
                 img.className = (svg.getAttribute('class') || '') + ' jellyreader-replaced-logo';
                 img.dataset.jellyreaderCustom = 'true';
                 svg.parentNode.replaceChild(img, svg);
-                console.log('[JellyReader] Successfully replaced Jellyfin SVG logo with reader_icon.png');
+                console.log('[JellyReader] Successfully replaced Jellyfin SVG logo with reader_icon.png (50px)');
             }
         });
 
@@ -163,14 +162,18 @@
                         icon.dataset.jellyreaderCustom = 'true';
                         if (icon.tagName.toLowerCase() === 'img') {
                             icon.src = '/native/reader_icon.png';
+                            icon.style.width = '50px';
+                            icon.style.height = '50px';
+                            icon.style.minWidth = '46px';
                             icon.style.objectFit = 'contain';
                         } else {
                             const img = document.createElement('img');
                             img.src = '/native/reader_icon.png';
-                            img.style.width = '38px';
-                            img.style.height = '38px';
+                            img.style.width = '50px';
+                            img.style.height = '50px';
+                            img.style.minWidth = '46px';
                             img.style.objectFit = 'contain';
-                            img.style.marginRight = '12px';
+                            img.style.marginRight = '8px';
                             img.className = 'jellyreader-replaced-logo';
                             img.dataset.jellyreaderCustom = 'true';
                             icon.parentNode.replaceChild(img, icon);
@@ -189,12 +192,15 @@
             const imgOrSvg = el.querySelector('img, svg') || el;
             if (imgOrSvg.tagName.toLowerCase() === 'img') {
                 imgOrSvg.src = '/native/reader_icon.png';
+                imgOrSvg.style.width = '50px';
+                imgOrSvg.style.height = '50px';
                 imgOrSvg.style.objectFit = 'contain';
             } else if (imgOrSvg.tagName.toLowerCase() === 'svg') {
                 const img = document.createElement('img');
                 img.src = '/native/reader_icon.png';
-                img.style.width = '38px';
-                img.style.height = '38px';
+                img.style.width = '50px';
+                img.style.height = '50px';
+                img.style.minWidth = '46px';
                 img.style.objectFit = 'contain';
                 img.className = 'jellyreader-replaced-logo';
                 img.dataset.jellyreaderCustom = 'true';
