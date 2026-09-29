@@ -162,60 +162,72 @@
             el.style.maxHeight = '140px';
         });
 
-        // B. Strategy 1: Replace any SVG that matches the unique Jellyfin logo brand signature
-        // ONLY matches #aa5cc3 (purple gradient) or geometric path coordinates.
-        // NEVER matches #00a4dc (generic cyan accent) or Material Design icons.
-        // NEVER touches the back button.
+        // B. Replace any <img> with Jellyfin brand assets (transparent icon, banner, solid icon, logo)
+        const allImgs = document.querySelectorAll('img');
+        allImgs.forEach(img => {
+            if (img.dataset.jellyreaderCustom) return;
+            const src = (img.src || '').toLowerCase();
+            if (src.includes('icon-transparent') || 
+                src.includes('banner-light') || 
+                src.includes('banner-dark') || 
+                src.includes('icon-solid') || 
+                (src.includes('logo') && !img.closest('.card, .cardBox, .cardImageContainer, .itemAction, .imageContainer'))) {
+                replaceLogoElement(img);
+            }
+        });
+
+        // C. Target all drawers and sidebars across ALL Jellyfin versions (including modern React/MUI in Jellyfin 12.0)
+        const drawerSelectors = [
+            '.mainDrawer', '.adminDrawer', '.sidebar', 'aside', '[data-role="panel"]', '.navDrawer',
+            '.MuiDrawer-root', '.MuiDrawer-paper', '.MuiPaper-root', '[class*="drawer" i]', '[class*="sidebar" i]'
+        ].join(', ');
+        const drawers = document.querySelectorAll(drawerSelectors);
+        drawers.forEach(drawer => {
+            // Find all icons (img or svg) in the drawer
+            const candidateIcons = drawer.querySelectorAll('svg, img');
+            candidateIcons.forEach(icon => {
+                if (icon.dataset.jellyreaderCustom) return;
+                // Safeguard: ignore navigation menu item icons (Start, Ulubione, Książki, etc.)
+                if (icon.closest('.navMenuOption, .MuiListItem-root, .MuiListItemButton-root, .listItem, [data-itemtype], a[href]')) {
+                    return;
+                }
+                // Safeguard: NEVER touch back button or user action buttons
+                if (icon.closest('.headerBackButton, [data-action="back"], button')) {
+                    return;
+                }
+                // This is the drawer header logo!
+                replaceLogoElement(icon);
+            });
+        });
+
+        // D. Replace any SVG matching Jellyfin brand signature
         const allSvgs = document.querySelectorAll('svg');
         allSvgs.forEach(svg => {
             if (svg.dataset.jellyreaderCustom) return;
-            if (svg.closest('.headerBackButton, [data-action="back"], button[title*="Wstecz"], button[title*="Back"], .paper-icon-button-light.headerBackButton')) {
+            // Absolute safety guard: NEVER touch the back button or navigation buttons
+            if (svg.closest('.headerBackButton, [data-action="back"], button[title*="Wstecz"], button[title*="Back"], .paper-icon-button-light.headerBackButton, button.headerButtonLeft')) {
                 return;
             }
             const content = ((svg.innerHTML || '') + ' ' + (svg.outerHTML || '')).toLowerCase();
+            // Don't touch navigation arrows or standard Material icons
+            if (content.includes('chevron_left') || content.includes('arrow_back') || content.includes('arrow_forward') || content.includes('menu')) {
+                return;
+            }
             if (content.includes('aa5cc3') || 
                 content.includes('inner-shape') || 
                 content.includes('outer-shape') || 
                 content.includes('banner-logo') || 
                 content.includes('icon-solid') || 
                 content.includes('201.62') || 
-                content.includes('359.43')) {
+                content.includes('359.43') ||
+                content.includes('icon-transparent')) {
                 replaceLogoElement(svg);
             }
         });
 
-        // C. Strategy 2: Directly find the server header row by text content ("MINTPC" / "12.0")
-        // STRICTLY scoped inside drawer / sidebar containers only (never touches the top header bar!)
-        const drawers = document.querySelectorAll('.mainDrawer, .adminDrawer, .sidebar, aside, [data-role="panel"], .navDrawer');
-        drawers.forEach(drawer => {
-            const walker = document.createTreeWalker(drawer, NodeFilter.SHOW_TEXT);
-            let node;
-            while ((node = walker.nextNode())) {
-                const text = node.textContent.trim();
-                if (text === '12.0' || text === 'MINTPC') {
-                    // Find the nearest row container holding both the text and the icon
-                    let row = node.parentElement;
-                    let depth = 0;
-                    while (row && row !== drawer && depth < 5) {
-                        const rowText = (row.textContent || '').trim();
-                        // Must be a small header row (< 60 chars) and not the entire page/drawer
-                        if (rowText.length < 60 && (rowText.includes('MINTPC') || rowText.includes('12.0'))) {
-                            const icon = row.querySelector('svg, img');
-                            if (icon && !icon.dataset.jellyreaderCustom) {
-                                replaceLogoElement(icon);
-                                break;
-                            }
-                        }
-                        row = row.parentElement;
-                        depth++;
-                    }
-                }
-            }
-        });
-
-        // D. Strategy 3: Dedicated drawer logo classes if present
-        const drawerLogos = document.querySelectorAll('.adminDrawerLogo, .mainDrawerLogo, .mainDrawerLogoImage, .sidebarLogo');
-        drawerLogos.forEach(el => {
+        // E. Header bar page title logo (w pasku biblioteki/kokpitu)
+        const headerLogos = document.querySelectorAll('.pageTitleWithDefaultLogo, .pageTitleWithLogo, .mainDrawerLogoImage, .drawerLogo, .adminDrawerLogo');
+        headerLogos.forEach(el => {
             if (el.dataset.jellyreaderCustom) return;
             const icon = el.querySelector('svg, img') || el;
             if (icon && !icon.dataset.jellyreaderCustom) {

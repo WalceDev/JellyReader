@@ -142,12 +142,33 @@ img.splashLogo,
     height: auto !important;
 }
 
+/* Header & Drawer logo instant CSS override */
+img[src*="icon-transparent"],
+img[src*="icon-solid"],
+img[src*="banner-light"],
+img[src*="banner-dark"],
+.pageTitleWithDefaultLogo,
+.pageTitleWithLogo,
+.mainDrawerLogoImage,
+.drawerLogo,
+.adminDrawerLogo {
+    content: url('/native/reader_icon.png') !important;
+    background-image: url('/native/reader_icon.png') !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    background-size: contain !important;
+    object-fit: contain !important;
+}
+
 .jellyreader-replaced-logo,
 img.jellyreader-replaced-logo,
 .mainDrawer .jellyreader-drawer-logo,
 .mainDrawer .jellyreader-replaced-logo,
 .adminDrawer .jellyreader-replaced-logo,
-.sidebar .jellyreader-replaced-logo {
+.sidebar .jellyreader-replaced-logo,
+[class*="drawer" i] .jellyreader-replaced-logo,
+[class*="sidebar" i] .jellyreader-replaced-logo,
+[class*="MuiDrawer" i] .jellyreader-replaced-logo {
     width: 48px !important;
     height: 48px !important;
     min-width: 44px !important;
