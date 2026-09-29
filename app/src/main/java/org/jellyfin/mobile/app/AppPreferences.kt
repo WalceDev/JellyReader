@@ -132,4 +132,12 @@ class AppPreferences(context: Context) {
     var externalPlayerApp: String
         get() = sharedPreferences.getString(Constants.PREF_EXTERNAL_PLAYER_APP, ExternalPlayerPackage.SYSTEM_DEFAULT)!!
         set(value) = sharedPreferences.edit { putString(Constants.PREF_EXTERNAL_PLAYER_APP, value) }
+
+    var readerDefaultStartView: String
+        get() = sharedPreferences.getString(Constants.PREF_READER_DEFAULT_START_VIEW, "default") ?: "default"
+        set(value) = sharedPreferences.edit { putString(Constants.PREF_READER_DEFAULT_START_VIEW, value) }
+
+    var readerLibrariesCache: String
+        get() = sharedPreferences.getString(Constants.PREF_READER_LIBRARIES_CACHE, "[]") ?: "[]"
+        set(value) = sharedPreferences.edit { putString(Constants.PREF_READER_LIBRARIES_CACHE, value) }
 }

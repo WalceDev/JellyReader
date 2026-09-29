@@ -31,6 +31,7 @@ import org.jellyfin.mobile.utils.BackPressInterceptor
 import org.jellyfin.mobile.utils.Constants
 import org.jellyfin.mobile.utils.applyWindowInsetsAsMargins
 import org.jellyfin.mobile.utils.extensions.requireMainActivity
+import org.jellyfin.mobile.utils.extensions.addFragment
 import org.jellyfin.mobile.utils.isPackageInstalled
 import org.jellyfin.mobile.utils.withThemedContext
 import org.koin.android.ext.android.inject
@@ -289,11 +290,23 @@ class SettingsFragment : Fragment(), BackPressInterceptor {
                 false
             }
         }
+
+        categoryHeader(PREF_CATEGORY_READER) {
+            titleRes = R.string.pref_category_reader_settings
+        }
+        pref("pref_open_reader_settings") {
+            titleRes = R.string.pref_category_reader_settings
+            summaryRes = R.string.pref_reader_default_start_view_summary
+            defaultOnClick {
+                parentFragmentManager.addFragment<ReaderSettingsFragment>()
+            }
+        }
     }
 
     companion object {
         const val PREF_CATEGORY_MUSIC_PLAYER = "pref_category_music"
         const val PREF_CATEGORY_VIDEO_PLAYER = "pref_category_video"
         const val PREF_CATEGORY_DOWNLOADS = "pref_category_downloads"
+        const val PREF_CATEGORY_READER = "pref_category_reader"
     }
 }

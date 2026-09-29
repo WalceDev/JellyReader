@@ -75,6 +75,25 @@ window.NativeShell = {
         window.NativeInterface.openClientSettings();
     },
 
+    openReaderSettings() {
+        if (window.NativeInterface?.openReaderSettings) {
+            window.NativeInterface.openReaderSettings();
+        }
+    },
+
+    getDefaultStartView() {
+        if (window.NativeInterface?.getDefaultStartView) {
+            return window.NativeInterface.getDefaultStartView();
+        }
+        return 'default';
+    },
+
+    saveAvailableLibraries(json) {
+        if (window.NativeInterface?.saveAvailableLibraries) {
+            window.NativeInterface.saveAvailableLibraries(typeof json === 'string' ? json : JSON.stringify(json));
+        }
+    },
+
     selectServer() {
         window.NativeInterface.openServerSelection();
     },

@@ -15,6 +15,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import org.jellyfin.mobile.app.AppPreferences
 import org.jellyfin.mobile.BuildConfig
 import org.jellyfin.mobile.events.ActivityEvent
 import org.jellyfin.mobile.events.ActivityEventHandler
@@ -48,6 +49,7 @@ class NativeInterface(private val context: Context) : KoinComponent {
     private val activityEventHandler: ActivityEventHandler = get()
     private val remoteVolumeProvider: RemoteVolumeProvider by inject()
     private val deviceProfileBuilder: DeviceProfileBuilder by inject()
+    private val appPreferences: AppPreferences by inject()
 
     @SuppressLint("HardwareIds")
     @JavascriptInterface
@@ -171,6 +173,21 @@ class NativeInterface(private val context: Context) : KoinComponent {
     @JavascriptInterface
     fun openClientSettings() {
         emitEvent(ActivityEvent.OpenSettings)
+    }
+
+    @JavascriptInterface
+    fun openReaderSettings() {
+        emitEvent(ActivityEvent.OpenReaderSettings)
+    }
+
+    @JavascriptInterface
+    fun getDefaultStartView(): String {
+        return appPreferences.readerDefaultStartView
+    }
+
+    @JavascriptInterface
+    fun saveAvailableLibraries(librariesJson: String) {
+        appPreferences.readerLibrariesCache = librariesJson
     }
 
     @JavascriptInterface

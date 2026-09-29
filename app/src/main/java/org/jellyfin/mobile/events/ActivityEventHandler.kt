@@ -17,6 +17,7 @@ import org.jellyfin.mobile.bridge.JavascriptCallback
 import org.jellyfin.mobile.downloads.DownloadsFragment
 import org.jellyfin.mobile.player.ui.PlayerFragment
 import org.jellyfin.mobile.player.ui.PlayerFullscreenHelper
+import org.jellyfin.mobile.settings.ReaderSettingsFragment
 import org.jellyfin.mobile.settings.SettingsFragment
 import org.jellyfin.mobile.utils.Constants
 import org.jellyfin.mobile.utils.extensions.addFragment
@@ -104,6 +105,9 @@ class ActivityEventHandler(
             }
             ActivityEvent.OpenSettings -> {
                 supportFragmentManager.addFragment<SettingsFragment>()
+            }
+            ActivityEvent.OpenReaderSettings -> {
+                supportFragmentManager.addFragment<ReaderSettingsFragment>()
             }
             ActivityEvent.SelectServer -> {
                 mainViewModel.resetServer()

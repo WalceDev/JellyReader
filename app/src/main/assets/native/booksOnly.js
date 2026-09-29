@@ -11,6 +11,8 @@
     function filterViewsPayload(data) {
         if (!data) return data;
 
+        let bookLibraries = [];
+
         if (Array.isArray(data.Items)) {
             data.Items = data.Items.filter(item => {
                 const colType = (item.CollectionType || '').toLowerCase();
@@ -21,6 +23,7 @@
                 return true;
             });
             data.TotalRecordCount = data.Items.length;
+            bookLibraries = data.Items.filter(item => (item.CollectionType || '').toLowerCase() === 'books');
         } else if (Array.isArray(data)) {
             data = data.filter(item => {
                 const colType = (item.CollectionType || '').toLowerCase();
@@ -29,6 +32,19 @@
                 }
                 return true;
             });
+            bookLibraries = data.filter(item => (item.CollectionType || '').toLowerCase() === 'books');
+        }
+
+        if (bookLibraries.length > 0) {
+            const libList = bookLibraries.map(b => ({ id: b.Id, name: b.Name }));
+            try {
+                if (window.NativeInterface?.saveAvailableLibraries) {
+                    window.NativeInterface.saveAvailableLibraries(JSON.stringify(libList));
+                } else if (window.NativeShell?.saveAvailableLibraries) {
+                    window.NativeShell.saveAvailableLibraries(JSON.stringify(libList));
+                }
+                localStorage.setItem('jellyreader_libraries', JSON.stringify(libList));
+            } catch (e) {}
         }
 
         return data;
@@ -258,33 +274,161 @@
         });
     }
 
-    // Set up MutationObserver to detect drawer openings and DOM changes
-    const observer = new MutationObserver(() => {
+    // 5. Injected Reader Settings Menu Item
+    function injectReaderSettingsMenuItem() {
+        if (document.querySelector('.jellyreader-settings-item')) return;
+
+        // Look for client settings or downloads item in settings views
+        const clientSettingsBtn = Array.from(document.querySelectorAll('.listItem, .navMenuOption, button, a')).find(el => {
+            const text = (el.textContent || '').trim().toLowerCase();
+            return text.includes('ustawienia klienta') || text.includes('client settings');
+        });
+
+        if (!clientSettingsBtn) return;
+
+        // Clone element to perfectly inherit theme styles and structure
+        const readerSettingsBtn = clientSettingsBtn.cloneNode(true);
+        readerSettingsBtn.classList.add('jellyreader-settings-item');
+        readerSettingsBtn.removeAttribute('id');
+        readerSettingsBtn.dataset.jellyreaderCustom = 'true';
+
+        const isPl = (navigator.language || '').toLowerCase().startsWith('pl');
+        const titleText = isPl ? 'Ustawienia czytnika' : 'Reader settings';
+
+        // Update text container
+        const textContainer = readerSettingsBtn.querySelector('.listItemBodyText, .listItemText, span') || readerSettingsBtn;
+        if (textContainer && textContainer !== readerSettingsBtn) {
+            textContainer.textContent = titleText;
+        } else {
+            readerSettingsBtn.textContent = titleText;
+        }
+
+        // Update icon with reader book icon
+        const icon = readerSettingsBtn.querySelector('svg, img, .material-icons, .listItemIcon');
+        if (icon) {
+            const newIcon = document.createElement('img');
+            newIcon.src = '/native/reader_icon.png';
+            newIcon.style.width = '24px';
+            newIcon.style.height = '24px';
+            newIcon.style.objectFit = 'contain';
+            newIcon.style.verticalAlign = 'middle';
+            newIcon.style.marginRight = '8px';
+            newIcon.dataset.jellyreaderCustom = 'true';
+            if (icon.parentNode) {
+                icon.parentNode.replaceChild(newIcon, icon);
+            }
+        }
+
+        readerSettingsBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.NativeInterface?.openReaderSettings) {
+                window.NativeInterface.openReaderSettings();
+            } else if (window.NativeShell?.openReaderSettings) {
+                window.NativeShell.openReaderSettings();
+            }
+        });
+
+        if (clientSettingsBtn.parentNode) {
+            clientSettingsBtn.parentNode.insertBefore(readerSettingsBtn, clientSettingsBtn.nextSibling);
+            console.log('[JellyReader] Successfully injected "Ustawienia czytnika" menu item.');
+        }
+    }
+
+    // 6. Default Startup View Redirector
+    let isRedirecting = false;
+    function checkAndHandleStartupRedirect() {
+        if (isRedirecting) return;
+        if (sessionStorage.getItem('jellyreader_startup_done')) return;
+
+        const hash = window.location.hash || '';
+        // Only run on the home / landing screen
+        const isHome = hash === '' || hash === '#' || hash === '#/' || hash.includes('home.html') || hash.includes('#!/home');
+        if (!isHome) return;
+
+        // Ensure user is authenticated and not on login page
+        if (document.querySelector('form.loginForm, #loginPage, input[type="password"]')) {
+            return;
+        }
+
+        let defaultView = 'default';
+        try {
+            if (window.NativeInterface?.getDefaultStartView) {
+                defaultView = window.NativeInterface.getDefaultStartView();
+            } else if (window.NativeShell?.getDefaultStartView) {
+                defaultView = window.NativeShell.getDefaultStartView();
+            }
+        } catch (e) {}
+
+        if (!defaultView || defaultView === 'default') {
+            sessionStorage.setItem('jellyreader_startup_done', 'true');
+            return;
+        }
+
+        // Wait until navigation router or page is ready
+        if (!window.Emby?.Page?.show && !window.location.hash) {
+            return;
+        }
+
+        isRedirecting = true;
+        sessionStorage.setItem('jellyreader_startup_done', 'true');
+        console.log('[JellyReader] Startup redirection to:', defaultView);
+
+        setTimeout(() => {
+            try {
+                if (defaultView === 'favorites') {
+                    if (window.Emby?.Page?.show) {
+                        window.Emby.Page.show('/home.html?tab=favorites');
+                    } else {
+                        window.location.hash = '#/home.html?tab=favorites';
+                    }
+                } else if (defaultView.startsWith('library:')) {
+                    const libId = defaultView.replace('library:', '');
+                    if (window.Emby?.Page?.show) {
+                        window.Emby.Page.show('/list.html?parentId=' + encodeURIComponent(libId));
+                    } else {
+                        window.location.hash = '#/list.html?parentId=' + encodeURIComponent(libId);
+                    }
+                }
+            } catch (err) {
+                console.error('[JellyReader] Redirection error:', err);
+            } finally {
+                isRedirecting = false;
+            }
+        }, 150);
+    }
+
+    function runAllJellyReaderTasks() {
         cleanupNavigation();
         applyJellyReaderBranding();
+        injectReaderSettingsMenuItem();
+        checkAndHandleStartupRedirect();
+    }
+
+    // Set up MutationObserver to detect drawer openings and DOM changes
+    const observer = new MutationObserver(() => {
+        runAllJellyReaderTasks();
     });
 
     // Also trigger on click (e.g. hamburger button opening the drawer)
     document.addEventListener('click', () => {
-        setTimeout(applyJellyReaderBranding, 50);
-        setTimeout(applyJellyReaderBranding, 200);
-        setTimeout(applyJellyReaderBranding, 500);
+        setTimeout(runAllJellyReaderTasks, 50);
+        setTimeout(runAllJellyReaderTasks, 200);
+        setTimeout(runAllJellyReaderTasks, 500);
     }, true);
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
-            cleanupNavigation();
-            applyJellyReaderBranding();
+            runAllJellyReaderTasks();
             observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
         });
     } else {
-        cleanupNavigation();
-        applyJellyReaderBranding();
+        runAllJellyReaderTasks();
         observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
     }
 
     // Interval checks for initial load period
-    const initTimer = setInterval(applyJellyReaderBranding, 250);
+    const initTimer = setInterval(runAllJellyReaderTasks, 250);
     setTimeout(() => clearInterval(initTimer), 10000);
 
     console.log('[JellyfinReader] Safe Books-Only filter & branding engine ready.');

@@ -181,4 +181,19 @@ img.jellyreader-replaced-logo,
     margin-right: 12px !important;
 }
 
-
+/* Reader settings menu item in web settings list */
+.jellyreader-settings-item {
+    cursor: pointer !important;
+}
+.jellyreader-settings-item img {
+    width: 24px !important;
+    height: 24px !important;
+    min-width: 24px !important;
+    min-height: 24px !important;
+    max-width: 24px !important;
+    max-height: 24px !important;
+    object-fit: contain !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
+    margin-right: 12px !important;
+}

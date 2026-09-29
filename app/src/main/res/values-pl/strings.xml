@@ -176,4 +176,12 @@
     <string name="download_location_inaccessible">Lokalizacja pobierania jest niedostępna</string>
     <string name="download_location_inaccessible_description">Wybrana lokalizacja pobierania nie jest już dostępna. Wybierz inny folder, aby wznowić pobieranie.</string>
     <string name="pref_exoplayer_direct_play_ass_description">Użyj eksperymentalnego renderowania napisów po stronie klienta, może to nie zawsze działać</string>
+    <string name="pref_category_reader_settings">Ustawienia czytnika</string>
+    <string name="pref_reader_default_start_view_title">Domyślny widok po uruchomieniu</string>
+    <string name="pref_reader_default_start_view_summary">Wybierz, który widok ma się otworzyć po uruchomieniu aplikacji</string>
+    <string name="pref_start_view_default">Domyślny (Start)</string>
+    <string name="pref_start_view_default_summary">Standardowy pulpit Jellyfin</string>
+    <string name="pref_start_view_favorites">Ulubione</string>
+    <string name="pref_start_view_favorites_summary">Otwórz ulubione książki</string>
+    <string name="pref_start_view_library_summary">Otwórz bibliotekę: %1$s</string>
 </resources>

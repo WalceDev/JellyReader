@@ -180,4 +180,12 @@
     <string name="download_location_not_set_description">To download media, please select a folder where the files should be stored.</string>
     <string name="download_location_inaccessible">Download location inaccessible</string>
     <string name="download_location_inaccessible_description">The selected download location is no longer accessible. Please select a different folder to resume downloads.</string>
+    <string name="pref_category_reader_settings">Reader settings</string>
+    <string name="pref_reader_default_start_view_title">Default startup view</string>
+    <string name="pref_reader_default_start_view_summary">Select which view to open when the app launches</string>
+    <string name="pref_start_view_default">Default (Home)</string>
+    <string name="pref_start_view_default_summary">Standard Jellyfin home screen</string>
+    <string name="pref_start_view_favorites">Favorites</string>
+    <string name="pref_start_view_favorites_summary">Open your favorite books</string>
+    <string name="pref_start_view_library_summary">Open library: %1$s</string>
 </resources>

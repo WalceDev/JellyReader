@@ -48,6 +48,8 @@ object Constants {
     const val PREF_SUBTITLE_STYLE = "pref_subtitle_style"
     const val PREF_STORAGE_LOCATION = "pref_storage_location"
     const val PREF_MEDIA_SEGMENT_ACTIONS = "pref_media_segment_actions"
+    const val PREF_READER_DEFAULT_START_VIEW = "pref_reader_default_start_view"
+    const val PREF_READER_LIBRARIES_CACHE = "pref_reader_libraries_cache"
 
     // InputManager commands
     const val PLAYBACK_MANAGER_COMMAND_PLAY = "unpause"
