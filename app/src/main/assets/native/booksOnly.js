@@ -116,8 +116,14 @@
     // Helper to replace an existing logo (svg or img) with JellyReader book logo
     function replaceLogoElement(targetEl) {
         if (!targetEl || targetEl.dataset.jellyreaderCustom) return;
-        // Absolute safety guard: NEVER touch the back button or navigation buttons
-        if (targetEl.closest('.headerBackButton, [data-action="back"], button[title*="Wstecz"], button[title*="Back"], .paper-icon-button-light.headerBackButton')) {
+        // Absolute safety guard: NEVER touch the back button, dropdown menus, cards, or user settings
+        if (targetEl.closest(
+            '.headerBackButton, [data-action="back"], button[title*="Wstecz"], button[title*="Back"], ' +
+            '.paper-icon-button-light.headerBackButton, button.headerButtonLeft, ' +
+            '.MuiMenu-paper, [role="menu"], [role="menuitem"], .actionSheet, .userMenu, .menuContainer, ' +
+            '.MuiCard-root, .card, .cardBox, .dashboardColumn, .dashboardSection, ' +
+            '.navMenuOption, .MuiListItem-root, .MuiListItemButton-root, .listItem'
+        )) {
             return;
         }
         targetEl.dataset.jellyreaderCustom = 'true';
@@ -166,35 +172,51 @@
         const allImgs = document.querySelectorAll('img');
         allImgs.forEach(img => {
             if (img.dataset.jellyreaderCustom) return;
+            // Exclude dropdown menus, dashboard cards, and list items
+            if (img.closest('.MuiMenu-paper, [role="menu"], [role="menuitem"], .MuiCard-root, .card, .cardBox, .dashboardColumn, .navMenuOption, .MuiListItem-root, button')) {
+                return;
+            }
             const src = (img.src || '').toLowerCase();
             if (src.includes('icon-transparent') || 
                 src.includes('banner-light') || 
                 src.includes('banner-dark') || 
-                src.includes('icon-solid') || 
-                (src.includes('logo') && !img.closest('.card, .cardBox, .cardImageContainer, .itemAction, .imageContainer'))) {
+                src.includes('icon-solid')) {
                 replaceLogoElement(img);
             }
         });
 
-        // C. Target all drawers and sidebars across ALL Jellyfin versions (including modern React/MUI in Jellyfin 12.0)
+        // C. Target ONLY real navigation drawer headers (MUI Drawer & mainDrawer)
         const drawerSelectors = [
             '.mainDrawer', '.adminDrawer', '.sidebar', 'aside', '[data-role="panel"]', '.navDrawer',
-            '.MuiDrawer-root', '.MuiDrawer-paper', '.MuiPaper-root', '[class*="drawer" i]', '[class*="sidebar" i]'
+            '.MuiDrawer-root', '.MuiDrawer-paper'
         ].join(', ');
         const drawers = document.querySelectorAll(drawerSelectors);
         drawers.forEach(drawer => {
+            // Ignore if this is a dropdown menu, dialog, or card
+            if (drawer.closest('.MuiMenu-paper, [role="menu"], .MuiDialog-paper, .MuiCard-root, .card, .cardBox')) {
+                return;
+            }
             // Find all icons (img or svg) in the drawer
             const candidateIcons = drawer.querySelectorAll('svg, img');
             candidateIcons.forEach(icon => {
                 if (icon.dataset.jellyreaderCustom) return;
                 // Safeguard: ignore navigation menu item icons (Start, Ulubione, Książki, etc.)
-                if (icon.closest('.navMenuOption, .MuiListItem-root, .MuiListItemButton-root, .listItem, [data-itemtype], a[href]')) {
+                if (icon.closest('.navMenuOption, .MuiListItem-root, .MuiListItemButton-root, .listItem, [data-itemtype], a[href], button, [role="menuitem"]')) {
                     return;
                 }
                 // Safeguard: NEVER touch back button or user action buttons
-                if (icon.closest('.headerBackButton, [data-action="back"], button')) {
+                if (icon.closest('.headerBackButton, [data-action="back"]')) {
                     return;
                 }
+                // Must be near the top of the drawer (header area: within top 120px)
+                try {
+                    const drawerRect = drawer.getBoundingClientRect();
+                    const iconRect = icon.getBoundingClientRect();
+                    if (iconRect.top > 0 && iconRect.top - drawerRect.top > 120) {
+                        return; // Ignore icons further down
+                    }
+                } catch (e) {}
+
                 // This is the drawer header logo!
                 replaceLogoElement(icon);
             });
@@ -204,8 +226,8 @@
         const allSvgs = document.querySelectorAll('svg');
         allSvgs.forEach(svg => {
             if (svg.dataset.jellyreaderCustom) return;
-            // Absolute safety guard: NEVER touch the back button or navigation buttons
-            if (svg.closest('.headerBackButton, [data-action="back"], button[title*="Wstecz"], button[title*="Back"], .paper-icon-button-light.headerBackButton, button.headerButtonLeft')) {
+            // Absolute safety guard: NEVER touch the back button, dropdown menus, cards, or user settings
+            if (svg.closest('.headerBackButton, [data-action="back"], button[title*="Wstecz"], button[title*="Back"], .paper-icon-button-light.headerBackButton, button.headerButtonLeft, .MuiMenu-paper, [role="menu"], [role="menuitem"], .MuiCard-root, .card, .cardBox')) {
                 return;
             }
             const content = ((svg.innerHTML || '') + ' ' + (svg.outerHTML || '')).toLowerCase();
