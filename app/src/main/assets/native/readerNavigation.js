@@ -19,12 +19,14 @@
     const COOLDOWN_MS = 120;
 
     // Counter state
-    const COUNTER_STORAGE_KEY = 'jellyfin_reader_counter_mode'; // 'relative' | 'absolute' | 'percent'
-    let currentCounterMode = localStorage.getItem(COUNTER_STORAGE_KEY) || 'relative';
+    const COUNTER_STORAGE_KEY = 'jellyfin_reader_counter_mode'; // 'absolute' | 'percent'
+    let currentCounterMode = localStorage.getItem(COUNTER_STORAGE_KEY) || 'absolute';
+    if (currentCounterMode !== 'percent' && currentCounterMode !== 'absolute') {
+        currentCounterMode = 'absolute';
+    }
     let activeBookPlayer = null;
     let currentBookInstance = null;
     let lastLocationData = null;
-    const chapterScreensCache = {};
 
     // SVG Icons
     const ICON_TAP = `<svg viewBox="0 0 24 24" style="width:22px;height:22px;fill:currentColor;"><path d="M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74a4.5 4.5 0 0 0-9 0c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26a1.53 1.53 0 0 0-.66-.15H13v-6a1.5 1.5 0 0 0-3 0v9.58l-3.37-.71a1.49 1.49 0 0 0-1.42.41l-.88.89 4.96 4.96c.38.38.89.59 1.42.59h6.45c1.01 0 1.87-.75 1.98-1.75l.54-4.83a2 2 0 0 0-.84-1.73z"/></svg>`;
@@ -583,14 +585,14 @@
         }
 
         if (currentCounterMode === 'percent') {
-            // Mode 3: Percentage (X% or X.X%)
+            // Mode 2: Percentage (X% or X.X%)
             if (pct !== null && typeof pct === 'number' && !isNaN(pct)) {
                 const pctVal = (Math.max(0, Math.min(1, pct)) * 100).toFixed(1);
                 counterEl.textContent = `${pctVal}%`;
-                counterEl.title = `Postęp: ${pctVal}%. Kliknij, aby zmienić tryb.`;
+                counterEl.title = `Postęp: ${pctVal}%. Kliknij, aby przełączyć na strony.`;
             } else {
                 counterEl.textContent = '0%';
-                counterEl.title = 'Postęp: 0%. Kliknij, aby zmienić tryb.';
+                counterEl.title = 'Postęp: 0%. Kliknij, aby przełączyć na strony.';
             }
             return;
         }
@@ -601,12 +603,13 @@
             return;
         }
 
-        const currChapPage = screenInfo ? screenInfo.currentScreen : 1;
-        const currChapScreens = screenInfo ? screenInfo.totalScreens : 1;
+        // Mode 1: Canonical normalized pages (X / Y)
+        const totalPages = struct.totalPages;
+        let currentPage = 1;
 
-        if (currentCounterMode === 'absolute') {
-            // Mode 2: Absolute canonical pages (X / Y)
-            const totalPages = struct.totalPages;
+        if (pct !== null && typeof pct === 'number' && !isNaN(pct) && pct > 0) {
+            currentPage = Math.max(1, Math.min(totalPages, Math.round(pct * totalPages) || 1));
+        } else {
             let charsBefore = 0;
             for (let i = 0; i < chapIndex; i++) {
                 charsBefore += struct.chapters[i]?.chars || 0;
@@ -614,61 +617,21 @@
             const currChapChars = struct.chapters[chapIndex]?.chars || 25000;
             const inChapFraction = Math.max(0, Math.min(1, (currChapPage - 0.5) / Math.max(1, currChapScreens)));
             const charsRead = charsBefore + (currChapChars * inChapFraction);
-            const currentPage = Math.max(1, Math.min(totalPages, Math.round(charsRead / 1800) + 1));
-
-            counterEl.textContent = `${currentPage} / ${totalPages}`;
-            counterEl.title = `Strona ${currentPage} z ${totalPages} (znormalizowana). Kliknij, aby zmienić tryb.`;
-            return;
+            currentPage = Math.max(1, Math.min(totalPages, Math.round(charsRead / 1800) + 1));
         }
 
-        if (currentCounterMode === 'relative') {
-            // Mode 1: Relative screens for the entire book (X / Y)
-            const currChapChars = struct.chapters[chapIndex]?.chars || 25000;
-
-            // Calculate screen density
-            let density = 1400; // baseline characters per screen
-            if (currChapChars >= 2500 && currChapScreens >= 2) {
-                density = currChapChars / currChapScreens;
-            }
-
-            let screensBefore = 0;
-            let totalEstimated = 0;
-
-            for (let i = 0; i < totalChapters; i++) {
-                const cChars = struct.chapters[i]?.chars || 25000;
-                let s = 1;
-                if (i === chapIndex && screenInfo) {
-                    s = currChapScreens;
-                } else if (cChars < 2500) {
-                    s = 1; // cover, title, dedication
-                } else {
-                    s = Math.max(1, Math.round(cChars / density));
-                }
-
-                if (i < chapIndex) {
-                    screensBefore += s;
-                }
-                totalEstimated += s;
-            }
-
-            const currentScreen = Math.min(totalEstimated, screensBefore + currChapPage);
-            counterEl.textContent = `${currentScreen} / ${totalEstimated}`;
-            counterEl.title = `Ekran ${currentScreen} z ${totalEstimated} (urządzenie, cała książka). Kliknij, aby zmienić tryb.`;
-            return;
-        }
+        counterEl.textContent = `${currentPage} / ${totalPages}`;
+        counterEl.title = `Strona ${currentPage} z ${totalPages} (znormalizowana). Kliknij, aby przełączyć na procenty.`;
     }
 
     function cycleCounterMode() {
         let modeLabel = '';
-        if (currentCounterMode === 'relative') {
-            currentCounterMode = 'absolute';
-            modeLabel = 'Tryb: Strony znormalizowane';
-        } else if (currentCounterMode === 'absolute') {
+        if (currentCounterMode === 'absolute') {
             currentCounterMode = 'percent';
             modeLabel = 'Tryb: Procent ukończenia';
         } else {
-            currentCounterMode = 'relative';
-            modeLabel = 'Tryb: Ekrany urządzenia (cała książka)';
+            currentCounterMode = 'absolute';
+            modeLabel = 'Tryb: Strony znormalizowane';
         }
         localStorage.setItem(COUNTER_STORAGE_KEY, currentCounterMode);
 
