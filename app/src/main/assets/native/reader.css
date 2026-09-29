@@ -147,8 +147,11 @@ img.splashLogo,
 .adminDrawerLogo,
 .adminDrawerLogo img,
 .sidebarLogo img,
-.jellyreader-drawer-logo {
+.jellyreader-drawer-logo,
+.jellyreader-replaced-logo {
     content: url('/native/reader_icon.png') !important;
     object-fit: contain !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
 }
 
