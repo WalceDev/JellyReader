@@ -278,11 +278,55 @@
         });
     }
 
+    // Helper to invoke React internal onClick handler directly
+    function invokeReactHandler(el) {
+        if (!el) return false;
+        const candidates = [
+            el,
+            ...Array.from(el.querySelectorAll('*')),
+            el.parentElement,
+            el.parentElement?.parentElement
+        ].filter(Boolean);
+
+        for (const node of candidates) {
+            const propKey = Object.keys(node).find(k => k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$'));
+            if (propKey && node[propKey]) {
+                const props = node[propKey];
+                const handler = props.onClick || props.onPointerUp || props.onTouchEnd;
+                if (typeof handler === 'function') {
+                    console.log('[JellyReader] Found direct React handler on:', node.className || node.tagName);
+                    try {
+                        const syntheticEvt = {
+                            preventDefault: () => {},
+                            stopPropagation: () => {},
+                            nativeEvent: new MouseEvent('click', { bubbles: true, cancelable: true, view: window }),
+                            target: node,
+                            currentTarget: node,
+                            isTrusted: true
+                        };
+                        handler(syntheticEvt);
+                        return true;
+                    } catch (e) {
+                        console.error('[JellyReader] React handler execution error:', e);
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     // Helper to safely trigger clicks in React/MUI as well as standard DOM
     function triggerAction(el) {
         if (!el) return false;
         try {
-            // Check if element, parent or child has a VALID, NON-ROOT href (not #, not #/, not /)
+            // 1. Direct React handler execution (fastest and most reliable in React 17/18)
+            const reactSuccess = invokeReactHandler(el);
+            if (reactSuccess) {
+                console.log('[JellyReader] React handler executed successfully');
+                return true;
+            }
+
+            // 2. Check if element, parent or child has a VALID, NON-ROOT href (not #, not #/, not /)
             const linkEl = el.closest('a') || (el.tagName.toLowerCase() === 'a' ? el : el.querySelector('a'));
             const rawHref = linkEl ? linkEl.getAttribute('href') : null;
             if (rawHref && rawHref !== '#' && rawHref !== '#/' && rawHref !== '/' && rawHref.length > 2 && !rawHref.startsWith('javascript:')) {
@@ -295,14 +339,25 @@
                 return true;
             }
 
-            // Dispatch touch events for mobile React/MUI (CardActionArea uses touch listeners on mobile)
+            // 3. Dispatch touch and click events with real element coordinates
+            const rect = el.getBoundingClientRect();
+            const clientX = rect.left > 0 ? (rect.left + rect.width / 2) : 150;
+            const clientY = rect.top > 0 ? (rect.top + rect.height / 2) : 150;
+            const evtInit = {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: clientX,
+                clientY: clientY
+            };
+
             try {
                 if (window.TouchEvent && window.Touch) {
                     const touch = new Touch({
                         identifier: Date.now(),
                         target: el,
-                        clientX: 100,
-                        clientY: 100
+                        clientX: clientX,
+                        clientY: clientY
                     });
                     el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch] }));
                     el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [touch] }));
@@ -310,7 +365,6 @@
             } catch (te) {}
 
             // Dispatch full pointer and mouse event sequence so React's root listener picks it up
-            const evtInit = { bubbles: true, cancelable: true, view: window };
             if (window.PointerEvent) {
                 el.dispatchEvent(new PointerEvent('pointerdown', evtInit));
                 el.dispatchEvent(new PointerEvent('pointerup', evtInit));
@@ -523,7 +577,10 @@
         const hash = window.location.hash || '';
         // Only run on the home / landing screen
         const isHome = hash === '' || hash === '#' || hash === '#/' || hash.includes('home.html') || hash.includes('#!/home');
-        if (!isHome) return;
+        if (!isHome) {
+            sessionStorage.setItem('jellyreader_startup_done', 'true');
+            return;
+        }
 
         // Ensure user is authenticated and not on login page
         if (document.querySelector('form.loginForm, #loginPage, input[type="password"]')) {
@@ -614,8 +671,6 @@
                 console.error('[JellyReader] Error reading library cache:', e);
             }
 
-            const serverId = libServerId || findServerId();
-
             let targetCard = null;
 
             // Strategy A: By explicit libId attribute
@@ -656,8 +711,7 @@
 
             if (targetCard) {
                 isRedirecting = true;
-                sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Found library element, triggering native click for:', libId, libName);
+                console.log('[JellyReader] Found library element, triggering action for:', libId, libName);
                 const actionArea = targetCard.querySelector('.MuiCardActionArea-root, .cardActionArea, button, a') || 
                                    targetCard.querySelector('.cardBox, .cardScalable') || 
                                    targetCard;
@@ -666,35 +720,36 @@
                     triggerAction(targetCard);
                 }
 
-                // Give native Jellyfin React router ample time to load the library view
+                // Verify after 700ms if navigation actually succeeded
                 setTimeout(() => {
+                    const currentHash = window.location.hash || '';
+                    const stillHome = currentHash === '' || currentHash === '#' || currentHash === '#/' || currentHash.includes('home.html') || currentHash.includes('#!/home');
+                    if (!stillHome) {
+                        sessionStorage.setItem('jellyreader_startup_done', 'true');
+                        console.log('[JellyReader] Startup navigation confirmed to:', currentHash);
+                    }
                     isRedirecting = false;
-                }, 1000);
+                }, 700);
                 return;
             }
 
-            // Stop trying after ~6 seconds (25 checks). Only if never found, do fallback
-            if (redirectAttempts > 25 && serverId) {
-                isRedirecting = true;
+            // Stop trying after ~6 seconds (25 checks) without navigating to list.html - stay on Start as requested
+            if (redirectAttempts > 25) {
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Startup library card not found after multiple attempts, falling back to direct URL navigation');
-                const targetPath = `/list.html?parentId=${encodeURIComponent(libId)}&serverId=${encodeURIComponent(serverId)}`;
-                if (window.Emby?.Page?.show) {
-                    window.Emby.Page.show(targetPath);
-                } else {
-                    window.location.hash = `#!${targetPath}`;
-                }
-                setTimeout(() => { isRedirecting = false; }, 500);
-                return;
-            }
-
-            // Stop trying after ~7.5 seconds (30 checks)
-            if (redirectAttempts > 30) {
-                sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Startup library redirection timeout; remaining on Start.');
+                console.log('[JellyReader] Startup library redirection timeout; remaining on Start as requested.');
             }
         }
     }
+
+    // Whenever hash changes away from home, mark startup done immediately
+    window.addEventListener('hashchange', () => {
+        const h = window.location.hash || '';
+        if (h && !h.includes('home') && !h.includes('login') && !h.includes('selectserver')) {
+            try {
+                sessionStorage.setItem('jellyreader_startup_done', 'true');
+            } catch (e) {}
+        }
+    });
 
     function runAllJellyReaderTasks() {
         cleanupNavigation();
