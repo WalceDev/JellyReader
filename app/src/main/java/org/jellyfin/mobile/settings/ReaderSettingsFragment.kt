@@ -36,10 +36,12 @@ class ReaderSettingsFragment : Fragment(), BackPressInterceptor {
         val localInflater = inflater.withThemedContext(requireContext(), R.style.AppTheme_Settings)
         val binding = FragmentSettingsBinding.inflate(localInflater, container, false)
         binding.root.applyWindowInsetsAsMargins()
-        binding.toolbar.setTitle(R.string.pref_category_reader_settings)
+        val readerTitle = getString(R.string.pref_category_reader_settings)
+        binding.toolbar.title = readerTitle
         requireMainActivity().apply {
             setSupportActionBar(binding.toolbar)
             supportActionBar?.setDisplayHomeAsUpEnabled(true)
+            supportActionBar?.title = readerTitle
         }
         binding.recyclerView.adapter = settingsAdapter
         return binding.root

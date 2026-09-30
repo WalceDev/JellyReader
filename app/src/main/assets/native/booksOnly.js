@@ -274,12 +274,41 @@
         });
     }
 
+    // Helper to safely trigger clicks in React/MUI as well as standard DOM
+    function triggerAction(el) {
+        if (!el) return false;
+        try {
+            // Check if element or child has href
+            const href = el.getAttribute('href') || (el.querySelector('a') && el.querySelector('a').getAttribute('href'));
+            if (href && (href.startsWith('#') || href.startsWith('/'))) {
+                const cleanHref = href.replace(/^#!\/?/, '/').replace(/^#\/?/, '/');
+                if (window.Emby?.Page?.show) {
+                    window.Emby.Page.show(cleanHref);
+                } else {
+                    window.location.hash = href;
+                }
+            }
+
+            // Dispatch full mouse event sequence so React's root listener picks it up
+            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+            el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            if (typeof el.click === 'function') {
+                el.click();
+            }
+            return true;
+        } catch (e) {
+            console.error('[JellyReader] Action trigger error:', e);
+            return false;
+        }
+    }
+
     // 5. Injected Reader Settings Menu Item
     function injectReaderSettingsMenuItem() {
         if (document.querySelector('.jellyreader-settings-item')) return;
 
         // Look for client settings or downloads item in settings views
-        const clientSettingsBtn = Array.from(document.querySelectorAll('.listItem, .navMenuOption, button, a')).find(el => {
+        const clientSettingsBtn = Array.from(document.querySelectorAll('.listItem, .navMenuOption, .MuiListItemButton-root, [class*="MuiListItem"], button, a')).find(el => {
             const text = (el.textContent || '').trim().toLowerCase();
             return text.includes('ustawienia klienta') || text.includes('client settings');
         });
@@ -295,21 +324,33 @@
         const isPl = (navigator.language || '').toLowerCase().startsWith('pl');
         const titleText = isPl ? 'Ustawienia czytnika' : 'Reader settings';
 
-        // Update text container
-        const textContainer = readerSettingsBtn.querySelector('.listItemBodyText, .listItemText, span') || readerSettingsBtn;
-        if (textContainer && textContainer !== readerSettingsBtn) {
-            textContainer.textContent = titleText;
-        } else {
-            readerSettingsBtn.textContent = titleText;
+        // Update text: Use TreeWalker to find and replace the exact text node
+        const walker = document.createTreeWalker(readerSettingsBtn, NodeFilter.SHOW_TEXT);
+        let node;
+        let replaced = false;
+        while ((node = walker.nextNode())) {
+            const val = (node.nodeValue || '').trim().toLowerCase();
+            if (val.includes('ustawienia') || val.includes('client') || val.includes('klienta') || val.includes('settings')) {
+                node.nodeValue = titleText;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) {
+            // Also explicitly update MUI / standard typography text containers
+            const textTargets = readerSettingsBtn.querySelectorAll('.MuiListItemText-primary, .MuiTypography-root, .listItemBodyText, .listItemText, .navMenuOptionText');
+            textTargets.forEach(t => t.textContent = titleText);
         }
 
         // Update icon with reader book icon
-        const icon = readerSettingsBtn.querySelector('svg, img, .material-icons, .listItemIcon');
+        const icon = readerSettingsBtn.querySelector('svg, img, .material-icons, .MuiListItemIcon-root, .listItemIcon');
         if (icon) {
             const newIcon = document.createElement('img');
             newIcon.src = '/native/reader_icon.png';
             newIcon.style.width = '24px';
             newIcon.style.height = '24px';
+            newIcon.style.minWidth = '24px';
+            newIcon.style.minHeight = '24px';
             newIcon.style.objectFit = 'contain';
             newIcon.style.verticalAlign = 'middle';
             newIcon.style.marginRight = '8px';
@@ -366,6 +407,8 @@
             return;
         }
 
+        redirectAttempts++;
+
         // --- FAVORITES REDIRECT ---
         if (defaultView === 'favorites') {
             // 1. Try finding tab button on Home screen
@@ -374,13 +417,13 @@
                 isRedirecting = true;
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
                 console.log('[JellyReader] Clicking Favorites tab button');
-                favTab.click();
+                triggerAction(favTab);
                 setTimeout(() => { isRedirecting = false; }, 500);
                 return;
             }
 
             // 2. Try finding drawer link
-            const favDrawer = Array.from(document.querySelectorAll('.mainDrawer a, .navDrawer a, .navMenuOption, aside a')).find(a => {
+            const favDrawer = Array.from(document.querySelectorAll('.mainDrawer a, .navDrawer a, .navMenuOption, .MuiListItemButton-root, aside a')).find(a => {
                 const t = (a.textContent || '').trim().toLowerCase();
                 return t === 'ulubione' || t === 'favorites';
             });
@@ -388,13 +431,12 @@
                 isRedirecting = true;
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
                 console.log('[JellyReader] Clicking Favorites drawer link');
-                favDrawer.click();
+                triggerAction(favDrawer);
                 setTimeout(() => { isRedirecting = false; }, 500);
                 return;
             }
 
             // 3. Fallback: URL route with tab=1 (numeric index for favorites in Jellyfin Web)
-            redirectAttempts++;
             if (redirectAttempts > 4) {
                 isRedirecting = true;
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
@@ -421,55 +463,65 @@
                 if (found) libName = found.name;
             } catch (e) {}
 
-            // 1. Try finding library card on the Home screen
-            let card = document.querySelector(`.card[data-id="${libId}"], .card[data-itemid="${libId}"], [data-id="${libId}"].card`);
-            if (!card && libName) {
-                const allCards = Array.from(document.querySelectorAll('.card, .cardBox, .cardScalable'));
-                card = allCards.find(c => {
-                    const text = (c.textContent || '').toLowerCase();
-                    return text.includes(libName.toLowerCase());
-                });
+            // Selectors covering MUI (Jellyfin 12.0) and classic WebUI
+            const cardSelectors = [
+                `[data-id="${libId}"]`,
+                `[data-itemid="${libId}"]`,
+                `a[href*="${libId}"]`,
+                `.MuiCard-root`,
+                `.MuiCardActionArea-root`,
+                `[class*="CardActionArea"]`,
+                `[class*="MuiCard"]`,
+                `.card`,
+                `.cardBox`
+            ].join(', ');
+
+            const allCards = Array.from(document.querySelectorAll(cardSelectors));
+            let targetCard = allCards.find(c => {
+                const idMatch = c.dataset?.id === libId || c.dataset?.itemid === libId || (c.getAttribute('href') || '').includes(libId);
+                const textMatch = libName && (c.textContent || '').toLowerCase().includes(libName.toLowerCase());
+                return idMatch || textMatch;
+            });
+
+            // If not found by specific card query, search all clickable elements in home container by text
+            if (!targetCard && libName) {
+                const allElements = Array.from(document.querySelectorAll('.homeSectionsContainer button, .homeSectionsContainer a, [role="button"], .MuiButtonBase-root'));
+                targetCard = allElements.find(el => (el.textContent || '').trim().toLowerCase().includes(libName.toLowerCase()));
             }
 
-            if (card) {
+            if (targetCard) {
                 isRedirecting = true;
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Found library card, clicking natively for:', libId, libName);
-                const clickTarget = card.querySelector('.cardBox, .cardScalable, .cardContent, button, a') || card;
-                clickTarget.click();
+                console.log('[JellyReader] Found library element, triggering action for:', libId, libName);
+                const clickTarget = targetCard.querySelector('.MuiCardActionArea-root, button, a, .cardBox, .cardScalable') || targetCard;
+                triggerAction(clickTarget);
                 setTimeout(() => { isRedirecting = false; }, 500);
                 return;
             }
 
-            // 2. Try finding library link in drawer
-            let drawerLink = document.querySelector(`.mainDrawer a[href*="${libId}"], .navMenuOption[href*="${libId}"], aside a[href*="${libId}"]`);
-            if (!drawerLink && libName) {
-                const allLinks = Array.from(document.querySelectorAll('.mainDrawer a, .navDrawer a, .navMenuOption, aside a'));
-                drawerLink = allLinks.find(a => (a.textContent || '').trim().toLowerCase() === libName.toLowerCase());
-            }
+            // Check drawer items (MUI ListItemButton & classic navMenuOption)
+            const drawerSelectors = '.MuiListItemButton-root, [class*="MuiListItem"], .navMenuOption, .mainDrawer a, aside a, [role="menuitem"]';
+            const allDrawerLinks = Array.from(document.querySelectorAll(drawerSelectors));
+            const targetDrawerLink = allDrawerLinks.find(a => {
+                const hrefMatch = (a.getAttribute('href') || '').includes(libId);
+                const text = (a.textContent || '').trim().toLowerCase();
+                const textMatch = libName && (text === libName.toLowerCase() || text.includes(libName.toLowerCase()));
+                return hrefMatch || textMatch;
+            });
 
-            if (drawerLink) {
+            if (targetDrawerLink) {
                 isRedirecting = true;
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Found library drawer link, clicking for:', libId);
-                drawerLink.click();
+                console.log('[JellyReader] Found library drawer link, triggering for:', libId);
+                triggerAction(targetDrawerLink);
                 setTimeout(() => { isRedirecting = false; }, 500);
                 return;
             }
 
-            // 3. Fallback: if home sections are rendered, click the first available library card
-            redirectAttempts++;
-            if (redirectAttempts > 6) {
-                const anyCard = document.querySelector('.card, .cardBox');
-                if (anyCard) {
-                    isRedirecting = true;
-                    sessionStorage.setItem('jellyreader_startup_done', 'true');
-                    console.log('[JellyReader] Fallback clicking first available card');
-                    const clickTarget = anyCard.querySelector('.cardBox, .cardScalable, .cardContent, button, a') || anyCard;
-                    clickTarget.click();
-                    setTimeout(() => { isRedirecting = false; }, 500);
-                    return;
-                }
+            // Give up only after enough attempts (e.g. 20 checks = ~5 seconds) so we don't trap the user
+            if (redirectAttempts > 20) {
+                sessionStorage.setItem('jellyreader_startup_done', 'true');
+                console.log('[JellyReader] Could not find library card after 20 attempts, remaining on Start');
             }
         }
     }
