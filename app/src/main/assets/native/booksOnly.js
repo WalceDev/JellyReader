@@ -36,7 +36,11 @@
         }
 
         if (bookLibraries.length > 0) {
-            const libList = bookLibraries.map(b => ({ id: b.Id, name: b.Name }));
+            const libList = bookLibraries.map(b => ({
+                id: b.Id,
+                name: b.Name,
+                serverId: b.ServerId || b.serverId || ''
+            }));
             try {
                 if (window.NativeInterface?.saveAvailableLibraries) {
                     window.NativeInterface.saveAvailableLibraries(JSON.stringify(libList));
@@ -312,17 +316,17 @@
     function injectReaderSettingsMenuItem() {
         const isPl = (navigator.language || '').toLowerCase().startsWith('pl');
         const titleText = isPl ? 'Ustawienia czytnika' : 'Reader settings';
+        const subtitleText = isPl ? 'Ustawienia widoku i czytnika' : 'Reader and display preferences';
 
         // Find candidate buttons/links across all containers
         const candidateEls = Array.from(document.querySelectorAll(
             '.listItem, .navMenuOption, .MuiListItemButton-root, [class*="MuiListItem"], [role="menuitem"], li, button, a'
         )).filter(el => {
-            const text = (el.textContent || '').trim().toLowerCase();
-            if (!text.includes('ustawienia klienta') && !text.includes('client settings')) return false;
             if (el.classList.contains('jellyreader-settings-item') || el.dataset?.jellyreaderCustom) return false;
             // Exclude large parent containers
             if (el.children.length > 5) return false;
-            return true;
+            const text = (el.textContent || '').trim().toLowerCase();
+            return text.includes('ustawienia klienta') || text.includes('client settings');
         });
 
         candidateEls.forEach(candidate => {
@@ -331,14 +335,25 @@
             const parent = rowItem.parentNode;
             if (!parent) return;
 
-            // If this container already has reader settings injected, don't duplicate
-            if (parent.querySelector('.jellyreader-settings-item')) return;
+            // Scope container: Settings page or dropdown menu
+            const container = rowItem.closest('.userMenu, .MuiMenu-paper, [role="menu"], [data-role="page"], .page, .view, .paperList') || parent;
+
+            // Clean up any duplicates inside this container
+            const existingInContainer = container.querySelectorAll('.jellyreader-settings-item');
+            if (existingInContainer.length > 1) {
+                for (let i = 1; i < existingInContainer.length; i++) {
+                    existingInContainer[i].remove();
+                }
+            }
+            if (existingInContainer.length >= 1) return;
+            if (rowItem.nextElementSibling?.classList?.contains('jellyreader-settings-item')) return;
 
             // Clone the row item to perfectly inherit layout, typography, and theme
             const readerRow = rowItem.cloneNode(true);
             readerRow.classList.add('jellyreader-settings-item');
             readerRow.removeAttribute('id');
             readerRow.dataset.jellyreaderCustom = 'true';
+            readerRow.querySelectorAll('*').forEach(c => c.dataset.jellyreaderCustom = 'true');
 
             // Remove any href to avoid unwanted routing
             if (readerRow.tagName.toLowerCase() === 'a') {
@@ -365,6 +380,12 @@
             if (!replaced) {
                 const textTargets = readerRow.querySelectorAll('.MuiListItemText-primary, .MuiTypography-root, .listItemBodyText, .listItemText, .navMenuOptionText');
                 textTargets.forEach(t => t.textContent = titleText);
+            }
+
+            // Update secondary text (subtitle) if present in settings list
+            const secondaryEl = readerRow.querySelector('.listItemSecondaryText, .secondary, .MuiTypography-colorTextSecondary');
+            if (secondaryEl) {
+                secondaryEl.textContent = subtitleText;
             }
 
             // Update icon: replace with reader icon
@@ -400,6 +421,80 @@
             parent.insertBefore(readerRow, rowItem.nextSibling);
             console.log('[JellyReader] Successfully injected separate "Ustawienia czytnika" row.');
         });
+    }
+
+    // Helper to find serverId across runtime sources
+    function findServerId() {
+        try {
+            // 1. Check window.ApiClient
+            if (window.ApiClient) {
+                if (typeof window.ApiClient.serverId === 'function') {
+                    const sid = window.ApiClient.serverId();
+                    if (sid) return sid;
+                }
+                if (window.ApiClient._serverId) return window.ApiClient._serverId;
+                if (typeof window.ApiClient.serverInfo === 'function') {
+                    const sInfo = window.ApiClient.serverInfo();
+                    if (sInfo && sInfo.Id) return sInfo.Id;
+                }
+                if (window.ApiClient.serverInfo && window.ApiClient.serverInfo.Id) {
+                    return window.ApiClient.serverInfo.Id;
+                }
+            }
+
+            // 2. Check window.ServerConnections
+            if (window.ServerConnections) {
+                if (typeof window.ServerConnections.currentServerId === 'function') {
+                    const sid = window.ServerConnections.currentServerId();
+                    if (sid) return sid;
+                }
+                const client = window.ServerConnections.getApiClient?.();
+                if (client) {
+                    if (typeof client.serverId === 'function') {
+                        const sid = client.serverId();
+                        if (sid) return sid;
+                    }
+                    if (client._serverId) return client._serverId;
+                }
+            }
+
+            // 3. Check localStorage jellyfin_credentials
+            const credsStr = localStorage.getItem('jellyfin_credentials');
+            if (credsStr) {
+                const creds = JSON.parse(credsStr);
+                const s = creds?.Servers?.[0];
+                if (s?.Id) return s.Id;
+                if (s?.id) return s.id;
+            }
+
+            // 4. Check cached libraries in NativeInterface or localStorage
+            let cachedLibsStr = '';
+            if (window.NativeInterface?.getAvailableLibraries) {
+                cachedLibsStr = window.NativeInterface.getAvailableLibraries();
+            } else if (window.NativeShell?.getAvailableLibraries) {
+                cachedLibsStr = window.NativeShell.getAvailableLibraries();
+            }
+            if (!cachedLibsStr || cachedLibsStr === '[]') {
+                cachedLibsStr = localStorage.getItem('jellyreader_libraries') || '[]';
+            }
+            if (cachedLibsStr) {
+                const cachedLibs = JSON.parse(cachedLibsStr);
+                const withSid = cachedLibs.find(l => l.serverId);
+                if (withSid) return withSid.serverId;
+            }
+
+            // 5. Check DOM links or attributes with serverId
+            const elWithServer = document.querySelector('[data-serverid], a[href*="serverId="]');
+            if (elWithServer) {
+                const sidAttr = elWithServer.getAttribute('data-serverid');
+                if (sidAttr) return sidAttr;
+                const match = (elWithServer.getAttribute('href') || '').match(/serverId=([^&]+)/);
+                if (match && match[1]) return decodeURIComponent(match[1]);
+            }
+        } catch (e) {
+            console.error('[JellyReader] findServerId error:', e);
+        }
+        return '';
     }
 
     // 6. Default Startup View Redirector
@@ -482,6 +577,7 @@
             const libId = defaultView.replace('library:', '');
 
             let libName = '';
+            let libServerId = '';
             try {
                 let cacheStr = '';
                 if (window.NativeInterface?.getAvailableLibraries) {
@@ -494,45 +590,36 @@
                 }
                 const cachedLibs = JSON.parse(cacheStr);
                 const found = cachedLibs.find(l => l.id === libId);
-                if (found) libName = found.name;
+                if (found) {
+                    libName = found.name;
+                    libServerId = found.serverId || '';
+                }
             } catch (e) {
                 console.error('[JellyReader] Error reading library cache:', e);
             }
+
+            const serverId = libServerId || findServerId();
 
             let targetCard = null;
 
             // Strategy A: By explicit libId attribute
             targetCard = document.querySelector(`[data-id="${libId}"], [data-itemid="${libId}"], a[href*="${libId}"]`);
 
-            // Strategy B: By library name match in cards or buttons on home screen
+            // Strategy B: By library name match in cards or buttons on home screen (NO .homeSectionsContainer restriction)
             if (!targetCard && libName) {
-                const candidates = Array.from(document.querySelectorAll(
-                    '.homeSectionsContainer [class*="MuiCard"], .homeSectionsContainer .card, .homeSectionsContainer .cardBox, ' +
-                    '.homeSectionsContainer button, .homeSectionsContainer a, [role="button"]'
-                ));
-                targetCard = candidates.find(el => {
-                    const text = (el.textContent || '').trim().toLowerCase();
-                    return text === libName.toLowerCase() || text.includes(libName.toLowerCase());
+                const targetText = libName.trim().toLowerCase();
+                const cardSelectors = '.MuiCard-root, [class*="MuiCard-root"], .card, .cardBox, .squareCard, [data-type="CollectionFolder"], [data-type="UserView"]';
+                const cardList = Array.from(document.querySelectorAll(cardSelectors)).filter(el => {
+                    return !el.closest('.header, .mainDrawer, aside, [role="menu"], .navMenuOption');
                 });
-            }
 
-            // Strategy C: Fallback to the first card in "Moje multimedia" / home section
-            if (!targetCard) {
-                const myMediaSection = Array.from(document.querySelectorAll('.homeSectionsContainer .verticalSection, .homeSectionsContainer section, .homeSectionsContainer > div')).find(sec => {
-                    const title = (sec.querySelector('.sectionTitle, h2, h3, [class*="MuiTypography-h"]')?.textContent || '').toLowerCase();
-                    return title.includes('moje') || title.includes('media') || title.includes('multimedia');
-                });
-                if (myMediaSection) {
-                    targetCard = myMediaSection.querySelector('.MuiCard-root, .MuiCardActionArea-root, .card, .cardBox, [class*="Card"]');
+                targetCard = cardList.find(el => (el.textContent || '').trim().toLowerCase() === targetText);
+                if (!targetCard) {
+                    targetCard = cardList.find(el => (el.textContent || '').toLowerCase().includes(targetText));
                 }
             }
 
-            // Strategy D: Fallback to first available card on home screen if attempts > 6
-            if (!targetCard && redirectAttempts > 6) {
-                targetCard = document.querySelector('.homeSectionsContainer .MuiCard-root, .homeSectionsContainer .card, .homeSectionsContainer .cardBox');
-            }
-
-            // Strategy E: Check drawer items
+            // Strategy C: Check drawer items
             if (!targetCard) {
                 const drawerLinks = Array.from(document.querySelectorAll('.MuiListItemButton-root, [class*="MuiListItem"], .navMenuOption, .mainDrawer a, aside a, [role="menuitem"]'));
                 targetCard = drawerLinks.find(a => {
@@ -543,12 +630,50 @@
                 });
             }
 
+            // Strategy D: Fallback to first available card on home screen if attempts > 4
+            if (!targetCard && redirectAttempts > 4) {
+                const firstCard = document.querySelector('.MuiCard-root, [class*="MuiCard-root"], .card, .cardBox');
+                if (firstCard && !firstCard.closest('.header, .mainDrawer, aside, [role="menu"]')) {
+                    targetCard = firstCard;
+                }
+            }
+
             if (targetCard) {
                 isRedirecting = true;
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
                 console.log('[JellyReader] Found library element, triggering native click for:', libId, libName);
                 const clickTarget = targetCard.querySelector('.MuiCardActionArea-root, button, a, .cardBox, .cardScalable') || targetCard;
                 triggerAction(clickTarget);
+
+                // If native click did not navigate within 350ms and serverId is available, fallback to URL navigation
+                setTimeout(() => {
+                    const currentHash = window.location.hash || '';
+                    const stillHome = currentHash === '' || currentHash === '#' || currentHash === '#/' || currentHash.includes('home.html') || currentHash.includes('#!/home');
+                    if (stillHome && serverId) {
+                        console.log('[JellyReader] Native click did not transition page, navigating directly to list.html');
+                        const targetPath = `/list.html?parentId=${encodeURIComponent(libId)}&serverId=${encodeURIComponent(serverId)}`;
+                        if (window.Emby?.Page?.show) {
+                            window.Emby.Page.show(targetPath);
+                        } else {
+                            window.location.hash = `#!${targetPath}`;
+                        }
+                    }
+                    isRedirecting = false;
+                }, 350);
+                return;
+            }
+
+            // Direct URL navigation if no card found after 3 attempts (~750ms) and serverId is available
+            if (redirectAttempts > 3 && serverId) {
+                isRedirecting = true;
+                sessionStorage.setItem('jellyreader_startup_done', 'true');
+                console.log('[JellyReader] Direct navigation to library list.html with serverId:', serverId);
+                const targetPath = `/list.html?parentId=${encodeURIComponent(libId)}&serverId=${encodeURIComponent(serverId)}`;
+                if (window.Emby?.Page?.show) {
+                    window.Emby.Page.show(targetPath);
+                } else {
+                    window.location.hash = `#!${targetPath}`;
+                }
                 setTimeout(() => { isRedirecting = false; }, 500);
                 return;
             }
