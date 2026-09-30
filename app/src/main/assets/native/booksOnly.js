@@ -282,8 +282,9 @@
     function triggerAction(el) {
         if (!el) return false;
         try {
-            // Check if element or child has a VALID, NON-ROOT href (not #, not #/, not /)
-            const rawHref = el.getAttribute('href') || (el.querySelector('a') && el.querySelector('a').getAttribute('href'));
+            // Check if element, parent or child has a VALID, NON-ROOT href (not #, not #/, not /)
+            const linkEl = el.closest('a') || (el.tagName.toLowerCase() === 'a' ? el : el.querySelector('a'));
+            const rawHref = linkEl ? linkEl.getAttribute('href') : null;
             if (rawHref && rawHref !== '#' && rawHref !== '#/' && rawHref !== '/' && rawHref.length > 2 && !rawHref.startsWith('javascript:')) {
                 const cleanHref = rawHref.replace(/^#!\/?/, '/').replace(/^#\/?/, '/');
                 if (window.Emby?.Page?.show) {
@@ -291,7 +292,22 @@
                 } else {
                     window.location.hash = rawHref;
                 }
+                return true;
             }
+
+            // Dispatch touch events for mobile React/MUI (CardActionArea uses touch listeners on mobile)
+            try {
+                if (window.TouchEvent && window.Touch) {
+                    const touch = new Touch({
+                        identifier: Date.now(),
+                        target: el,
+                        clientX: 100,
+                        clientY: 100
+                    });
+                    el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch] }));
+                    el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [touch] }));
+                }
+            } catch (te) {}
 
             // Dispatch full pointer and mouse event sequence so React's root listener picks it up
             const evtInit = { bubbles: true, cancelable: true, view: window };
@@ -630,8 +646,8 @@
                 });
             }
 
-            // Strategy D: Fallback to first available card on home screen if attempts > 4
-            if (!targetCard && redirectAttempts > 4) {
+            // Strategy D: Fallback to first available card on home screen if attempts > 8
+            if (!targetCard && redirectAttempts > 8) {
                 const firstCard = document.querySelector('.MuiCard-root, [class*="MuiCard-root"], .card, .cardBox');
                 if (firstCard && !firstCard.closest('.header, .mainDrawer, aside, [role="menu"]')) {
                     targetCard = firstCard;
@@ -642,32 +658,26 @@
                 isRedirecting = true;
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
                 console.log('[JellyReader] Found library element, triggering native click for:', libId, libName);
-                const clickTarget = targetCard.querySelector('.MuiCardActionArea-root, button, a, .cardBox, .cardScalable') || targetCard;
-                triggerAction(clickTarget);
+                const actionArea = targetCard.querySelector('.MuiCardActionArea-root, .cardActionArea, button, a') || 
+                                   targetCard.querySelector('.cardBox, .cardScalable') || 
+                                   targetCard;
+                triggerAction(actionArea);
+                if (actionArea !== targetCard) {
+                    triggerAction(targetCard);
+                }
 
-                // If native click did not navigate within 350ms and serverId is available, fallback to URL navigation
+                // Give native Jellyfin React router ample time to load the library view
                 setTimeout(() => {
-                    const currentHash = window.location.hash || '';
-                    const stillHome = currentHash === '' || currentHash === '#' || currentHash === '#/' || currentHash.includes('home.html') || currentHash.includes('#!/home');
-                    if (stillHome && serverId) {
-                        console.log('[JellyReader] Native click did not transition page, navigating directly to list.html');
-                        const targetPath = `/list.html?parentId=${encodeURIComponent(libId)}&serverId=${encodeURIComponent(serverId)}`;
-                        if (window.Emby?.Page?.show) {
-                            window.Emby.Page.show(targetPath);
-                        } else {
-                            window.location.hash = `#!${targetPath}`;
-                        }
-                    }
                     isRedirecting = false;
-                }, 350);
+                }, 1000);
                 return;
             }
 
-            // Direct URL navigation if no card found after 3 attempts (~750ms) and serverId is available
-            if (redirectAttempts > 3 && serverId) {
+            // Stop trying after ~6 seconds (25 checks). Only if never found, do fallback
+            if (redirectAttempts > 25 && serverId) {
                 isRedirecting = true;
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Direct navigation to library list.html with serverId:', serverId);
+                console.log('[JellyReader] Startup library card not found after multiple attempts, falling back to direct URL navigation');
                 const targetPath = `/list.html?parentId=${encodeURIComponent(libId)}&serverId=${encodeURIComponent(serverId)}`;
                 if (window.Emby?.Page?.show) {
                     window.Emby.Page.show(targetPath);
