@@ -278,21 +278,26 @@
     function triggerAction(el) {
         if (!el) return false;
         try {
-            // Check if element or child has href
-            const href = el.getAttribute('href') || (el.querySelector('a') && el.querySelector('a').getAttribute('href'));
-            if (href && (href.startsWith('#') || href.startsWith('/'))) {
-                const cleanHref = href.replace(/^#!\/?/, '/').replace(/^#\/?/, '/');
+            // Check if element or child has a VALID, NON-ROOT href (not #, not #/, not /)
+            const rawHref = el.getAttribute('href') || (el.querySelector('a') && el.querySelector('a').getAttribute('href'));
+            if (rawHref && rawHref !== '#' && rawHref !== '#/' && rawHref !== '/' && rawHref.length > 2 && !rawHref.startsWith('javascript:')) {
+                const cleanHref = rawHref.replace(/^#!\/?/, '/').replace(/^#\/?/, '/');
                 if (window.Emby?.Page?.show) {
                     window.Emby.Page.show(cleanHref);
                 } else {
-                    window.location.hash = href;
+                    window.location.hash = rawHref;
                 }
             }
 
-            // Dispatch full mouse event sequence so React's root listener picks it up
-            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-            el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            // Dispatch full pointer and mouse event sequence so React's root listener picks it up
+            const evtInit = { bubbles: true, cancelable: true, view: window };
+            if (window.PointerEvent) {
+                el.dispatchEvent(new PointerEvent('pointerdown', evtInit));
+                el.dispatchEvent(new PointerEvent('pointerup', evtInit));
+            }
+            el.dispatchEvent(new MouseEvent('mousedown', evtInit));
+            el.dispatchEvent(new MouseEvent('mouseup', evtInit));
+            el.dispatchEvent(new MouseEvent('click', evtInit));
             if (typeof el.click === 'function') {
                 el.click();
             }
@@ -305,75 +310,96 @@
 
     // 5. Injected Reader Settings Menu Item
     function injectReaderSettingsMenuItem() {
-        if (document.querySelector('.jellyreader-settings-item')) return;
-
-        // Look for client settings or downloads item in settings views
-        const clientSettingsBtn = Array.from(document.querySelectorAll('.listItem, .navMenuOption, .MuiListItemButton-root, [class*="MuiListItem"], button, a')).find(el => {
-            const text = (el.textContent || '').trim().toLowerCase();
-            return text.includes('ustawienia klienta') || text.includes('client settings');
-        });
-
-        if (!clientSettingsBtn) return;
-
-        // Clone element to perfectly inherit theme styles and structure
-        const readerSettingsBtn = clientSettingsBtn.cloneNode(true);
-        readerSettingsBtn.classList.add('jellyreader-settings-item');
-        readerSettingsBtn.removeAttribute('id');
-        readerSettingsBtn.dataset.jellyreaderCustom = 'true';
-
         const isPl = (navigator.language || '').toLowerCase().startsWith('pl');
         const titleText = isPl ? 'Ustawienia czytnika' : 'Reader settings';
 
-        // Update text: Use TreeWalker to find and replace the exact text node
-        const walker = document.createTreeWalker(readerSettingsBtn, NodeFilter.SHOW_TEXT);
-        let node;
-        let replaced = false;
-        while ((node = walker.nextNode())) {
-            const val = (node.nodeValue || '').trim().toLowerCase();
-            if (val.includes('ustawienia') || val.includes('client') || val.includes('klienta') || val.includes('settings')) {
-                node.nodeValue = titleText;
-                replaced = true;
-                break;
-            }
-        }
-        if (!replaced) {
-            // Also explicitly update MUI / standard typography text containers
-            const textTargets = readerSettingsBtn.querySelectorAll('.MuiListItemText-primary, .MuiTypography-root, .listItemBodyText, .listItemText, .navMenuOptionText');
-            textTargets.forEach(t => t.textContent = titleText);
-        }
-
-        // Update icon with reader book icon
-        const icon = readerSettingsBtn.querySelector('svg, img, .material-icons, .MuiListItemIcon-root, .listItemIcon');
-        if (icon) {
-            const newIcon = document.createElement('img');
-            newIcon.src = '/native/reader_icon.png';
-            newIcon.style.width = '24px';
-            newIcon.style.height = '24px';
-            newIcon.style.minWidth = '24px';
-            newIcon.style.minHeight = '24px';
-            newIcon.style.objectFit = 'contain';
-            newIcon.style.verticalAlign = 'middle';
-            newIcon.style.marginRight = '8px';
-            newIcon.dataset.jellyreaderCustom = 'true';
-            if (icon.parentNode) {
-                icon.parentNode.replaceChild(newIcon, icon);
-            }
-        }
-
-        readerSettingsBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (window.NativeInterface?.openReaderSettings) {
-                window.NativeInterface.openReaderSettings();
-            } else if (window.NativeShell?.openReaderSettings) {
-                window.NativeShell.openReaderSettings();
-            }
+        // Find candidate buttons/links across all containers
+        const candidateEls = Array.from(document.querySelectorAll(
+            '.listItem, .navMenuOption, .MuiListItemButton-root, [class*="MuiListItem"], [role="menuitem"], li, button, a'
+        )).filter(el => {
+            const text = (el.textContent || '').trim().toLowerCase();
+            if (!text.includes('ustawienia klienta') && !text.includes('client settings')) return false;
+            if (el.classList.contains('jellyreader-settings-item') || el.dataset?.jellyreaderCustom) return false;
+            // Exclude large parent containers
+            if (el.children.length > 5) return false;
+            return true;
         });
 
-        if (clientSettingsBtn.parentNode) {
-            clientSettingsBtn.parentNode.insertBefore(readerSettingsBtn, clientSettingsBtn.nextSibling);
-            console.log('[JellyReader] Successfully injected "Ustawienia czytnika" menu item.');
-        }
+        candidateEls.forEach(candidate => {
+            // Find the true top-level row item (e.g. <li> in a menu, or .listItem in preferences)
+            const rowItem = candidate.closest('li, [role="menuitem"], .listItem, .navMenuOption') || candidate;
+            const parent = rowItem.parentNode;
+            if (!parent) return;
+
+            // If this container already has reader settings injected, don't duplicate
+            if (parent.querySelector('.jellyreader-settings-item')) return;
+
+            // Clone the row item to perfectly inherit layout, typography, and theme
+            const readerRow = rowItem.cloneNode(true);
+            readerRow.classList.add('jellyreader-settings-item');
+            readerRow.removeAttribute('id');
+            readerRow.dataset.jellyreaderCustom = 'true';
+
+            // Remove any href to avoid unwanted routing
+            if (readerRow.tagName.toLowerCase() === 'a') {
+                readerRow.removeAttribute('href');
+                readerRow.setAttribute('role', 'button');
+            }
+            readerRow.querySelectorAll('a').forEach(a => {
+                a.removeAttribute('href');
+                a.setAttribute('role', 'button');
+            });
+
+            // Update text: Use TreeWalker to replace text accurately
+            const walker = document.createTreeWalker(readerRow, NodeFilter.SHOW_TEXT);
+            let node;
+            let replaced = false;
+            while ((node = walker.nextNode())) {
+                const val = (node.nodeValue || '').trim().toLowerCase();
+                if (val.includes('ustawienia') || val.includes('client') || val.includes('klienta') || val.includes('settings')) {
+                    node.nodeValue = titleText;
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                const textTargets = readerRow.querySelectorAll('.MuiListItemText-primary, .MuiTypography-root, .listItemBodyText, .listItemText, .navMenuOptionText');
+                textTargets.forEach(t => t.textContent = titleText);
+            }
+
+            // Update icon: replace with reader icon
+            const icon = readerRow.querySelector('svg, img, .material-icons, .MuiListItemIcon-root, .listItemIcon');
+            if (icon) {
+                const newIcon = document.createElement('img');
+                newIcon.src = '/native/reader_icon.png';
+                newIcon.style.width = '24px';
+                newIcon.style.height = '24px';
+                newIcon.style.minWidth = '24px';
+                newIcon.style.minHeight = '24px';
+                newIcon.style.objectFit = 'contain';
+                newIcon.style.verticalAlign = 'middle';
+                newIcon.style.marginRight = '8px';
+                newIcon.dataset.jellyreaderCustom = 'true';
+                if (icon.parentNode) {
+                    icon.parentNode.replaceChild(newIcon, icon);
+                }
+            }
+
+            // Attach click listener
+            readerRow.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (window.NativeInterface?.openReaderSettings) {
+                    window.NativeInterface.openReaderSettings();
+                } else if (window.NativeShell?.openReaderSettings) {
+                    window.NativeShell.openReaderSettings();
+                }
+            }, true);
+
+            // Insert cleanly right after rowItem
+            parent.insertBefore(readerRow, rowItem.nextSibling);
+            console.log('[JellyReader] Successfully injected separate "Ustawienia czytnika" row.');
+        });
     }
 
     // 6. Default Startup View Redirector
@@ -457,71 +483,80 @@
 
             let libName = '';
             try {
-                const cacheStr = localStorage.getItem('jellyreader_libraries') || '[]';
+                let cacheStr = '';
+                if (window.NativeInterface?.getAvailableLibraries) {
+                    cacheStr = window.NativeInterface.getAvailableLibraries();
+                } else if (window.NativeShell?.getAvailableLibraries) {
+                    cacheStr = window.NativeShell.getAvailableLibraries();
+                }
+                if (!cacheStr || cacheStr === '[]') {
+                    cacheStr = localStorage.getItem('jellyreader_libraries') || '[]';
+                }
                 const cachedLibs = JSON.parse(cacheStr);
                 const found = cachedLibs.find(l => l.id === libId);
                 if (found) libName = found.name;
-            } catch (e) {}
+            } catch (e) {
+                console.error('[JellyReader] Error reading library cache:', e);
+            }
 
-            // Selectors covering MUI (Jellyfin 12.0) and classic WebUI
-            const cardSelectors = [
-                `[data-id="${libId}"]`,
-                `[data-itemid="${libId}"]`,
-                `a[href*="${libId}"]`,
-                `.MuiCard-root`,
-                `.MuiCardActionArea-root`,
-                `[class*="CardActionArea"]`,
-                `[class*="MuiCard"]`,
-                `.card`,
-                `.cardBox`
-            ].join(', ');
+            let targetCard = null;
 
-            const allCards = Array.from(document.querySelectorAll(cardSelectors));
-            let targetCard = allCards.find(c => {
-                const idMatch = c.dataset?.id === libId || c.dataset?.itemid === libId || (c.getAttribute('href') || '').includes(libId);
-                const textMatch = libName && (c.textContent || '').toLowerCase().includes(libName.toLowerCase());
-                return idMatch || textMatch;
-            });
+            // Strategy A: By explicit libId attribute
+            targetCard = document.querySelector(`[data-id="${libId}"], [data-itemid="${libId}"], a[href*="${libId}"]`);
 
-            // If not found by specific card query, search all clickable elements in home container by text
+            // Strategy B: By library name match in cards or buttons on home screen
             if (!targetCard && libName) {
-                const allElements = Array.from(document.querySelectorAll('.homeSectionsContainer button, .homeSectionsContainer a, [role="button"], .MuiButtonBase-root'));
-                targetCard = allElements.find(el => (el.textContent || '').trim().toLowerCase().includes(libName.toLowerCase()));
+                const candidates = Array.from(document.querySelectorAll(
+                    '.homeSectionsContainer [class*="MuiCard"], .homeSectionsContainer .card, .homeSectionsContainer .cardBox, ' +
+                    '.homeSectionsContainer button, .homeSectionsContainer a, [role="button"]'
+                ));
+                targetCard = candidates.find(el => {
+                    const text = (el.textContent || '').trim().toLowerCase();
+                    return text === libName.toLowerCase() || text.includes(libName.toLowerCase());
+                });
+            }
+
+            // Strategy C: Fallback to the first card in "Moje multimedia" / home section
+            if (!targetCard) {
+                const myMediaSection = Array.from(document.querySelectorAll('.homeSectionsContainer .verticalSection, .homeSectionsContainer section, .homeSectionsContainer > div')).find(sec => {
+                    const title = (sec.querySelector('.sectionTitle, h2, h3, [class*="MuiTypography-h"]')?.textContent || '').toLowerCase();
+                    return title.includes('moje') || title.includes('media') || title.includes('multimedia');
+                });
+                if (myMediaSection) {
+                    targetCard = myMediaSection.querySelector('.MuiCard-root, .MuiCardActionArea-root, .card, .cardBox, [class*="Card"]');
+                }
+            }
+
+            // Strategy D: Fallback to first available card on home screen if attempts > 6
+            if (!targetCard && redirectAttempts > 6) {
+                targetCard = document.querySelector('.homeSectionsContainer .MuiCard-root, .homeSectionsContainer .card, .homeSectionsContainer .cardBox');
+            }
+
+            // Strategy E: Check drawer items
+            if (!targetCard) {
+                const drawerLinks = Array.from(document.querySelectorAll('.MuiListItemButton-root, [class*="MuiListItem"], .navMenuOption, .mainDrawer a, aside a, [role="menuitem"]'));
+                targetCard = drawerLinks.find(a => {
+                    const hrefMatch = (a.getAttribute('href') || '').includes(libId);
+                    const text = (a.textContent || '').trim().toLowerCase();
+                    const textMatch = libName && (text === libName.toLowerCase() || text.includes(libName.toLowerCase()));
+                    return hrefMatch || textMatch;
+                });
             }
 
             if (targetCard) {
                 isRedirecting = true;
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Found library element, triggering action for:', libId, libName);
+                console.log('[JellyReader] Found library element, triggering native click for:', libId, libName);
                 const clickTarget = targetCard.querySelector('.MuiCardActionArea-root, button, a, .cardBox, .cardScalable') || targetCard;
                 triggerAction(clickTarget);
                 setTimeout(() => { isRedirecting = false; }, 500);
                 return;
             }
 
-            // Check drawer items (MUI ListItemButton & classic navMenuOption)
-            const drawerSelectors = '.MuiListItemButton-root, [class*="MuiListItem"], .navMenuOption, .mainDrawer a, aside a, [role="menuitem"]';
-            const allDrawerLinks = Array.from(document.querySelectorAll(drawerSelectors));
-            const targetDrawerLink = allDrawerLinks.find(a => {
-                const hrefMatch = (a.getAttribute('href') || '').includes(libId);
-                const text = (a.textContent || '').trim().toLowerCase();
-                const textMatch = libName && (text === libName.toLowerCase() || text.includes(libName.toLowerCase()));
-                return hrefMatch || textMatch;
-            });
-
-            if (targetDrawerLink) {
-                isRedirecting = true;
+            // Stop trying after ~7.5 seconds (30 checks)
+            if (redirectAttempts > 30) {
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Found library drawer link, triggering for:', libId);
-                triggerAction(targetDrawerLink);
-                setTimeout(() => { isRedirecting = false; }, 500);
-                return;
-            }
-
-            // Give up only after enough attempts (e.g. 20 checks = ~5 seconds) so we don't trap the user
-            if (redirectAttempts > 20) {
-                sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Could not find library card after 20 attempts, remaining on Start');
+                console.log('[JellyReader] Startup library redirection timeout; remaining on Start.');
             }
         }
     }

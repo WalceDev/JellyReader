@@ -94,6 +94,13 @@ window.NativeShell = {
         }
     },
 
+    getAvailableLibraries() {
+        if (window.NativeInterface?.getAvailableLibraries) {
+            return window.NativeInterface.getAvailableLibraries();
+        }
+        return '[]';
+    },
+
     selectServer() {
         window.NativeInterface.openServerSelection();
     },

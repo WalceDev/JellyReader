@@ -191,6 +191,11 @@ class NativeInterface(private val context: Context) : KoinComponent {
     }
 
     @JavascriptInterface
+    fun getAvailableLibraries(): String {
+        return appPreferences.readerLibrariesCache
+    }
+
+    @JavascriptInterface
     fun openServerSelection() {
         emitEvent(ActivityEvent.SelectServer)
     }
