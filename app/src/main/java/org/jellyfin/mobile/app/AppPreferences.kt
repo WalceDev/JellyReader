@@ -11,6 +11,8 @@ import org.jellyfin.mobile.settings.ExternalPlayerPackage
 import org.jellyfin.mobile.settings.VideoPlayerType
 import org.jellyfin.mobile.utils.Constants
 import org.jellyfin.sdk.model.api.MediaSegmentType
+import org.json.JSONArray
+import org.json.JSONObject
 
 class AppPreferences(context: Context) {
     private val sharedPreferences: SharedPreferences =
@@ -140,4 +142,53 @@ class AppPreferences(context: Context) {
     var readerLibrariesCache: String
         get() = sharedPreferences.getString(Constants.PREF_READER_LIBRARIES_CACHE, "[]") ?: "[]"
         set(value) = sharedPreferences.edit { putString(Constants.PREF_READER_LIBRARIES_CACHE, value) }
+
+    fun saveDiscoveredLibrary(id: String, name: String, hash: String, serverId: String) {
+        if (id.isBlank() || hash.isBlank()) return
+        try {
+            val jsonArray = if (readerLibrariesCache.isNotEmpty() && readerLibrariesCache != "[]") {
+                JSONArray(readerLibrariesCache)
+            } else {
+                JSONArray()
+            }
+            var updated = false
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                if (obj.optString("id") == id) {
+                    if (name.isNotBlank()) obj.put("name", name)
+                    if (serverId.isNotBlank()) obj.put("serverId", serverId)
+                    obj.put("hash", hash)
+                    updated = true
+                    break
+                }
+            }
+            if (!updated) {
+                val newObj = JSONObject().apply {
+                    put("id", id)
+                    put("name", name.ifBlank { "Książki" })
+                    put("hash", hash)
+                    put("serverId", serverId)
+                }
+                jsonArray.put(newObj)
+            }
+            readerLibrariesCache = jsonArray.toString()
+        } catch (_: Exception) {}
+    }
+
+    fun getLibraryStartupHash(libId: String): String? {
+        if (libId.isBlank()) return null
+        try {
+            if (readerLibrariesCache.isNotEmpty() && readerLibrariesCache != "[]") {
+                val jsonArray = JSONArray(readerLibrariesCache)
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    if (obj.optString("id") == libId) {
+                        val h = obj.optString("hash")
+                        if (h.isNotBlank()) return h
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return null
+    }
 }

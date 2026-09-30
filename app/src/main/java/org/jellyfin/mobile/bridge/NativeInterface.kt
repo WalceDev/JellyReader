@@ -196,6 +196,28 @@ class NativeInterface(private val context: Context) : KoinComponent {
     }
 
     @JavascriptInterface
+    fun registerLibraryView(id: String, name: String, hash: String, serverId: String): Boolean {
+        if (id.isBlank() || hash.isBlank()) return false
+        val alreadyKnown = appPreferences.getLibraryStartupHash(id) == hash
+        appPreferences.saveDiscoveredLibrary(id, name, hash, serverId)
+        if (!alreadyKnown) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    val displayName = name.ifBlank { "Książki" }
+                    val msg = context.getString(org.jellyfin.mobile.R.string.toast_library_registered, displayName)
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                } catch (_: Exception) {}
+            }
+        }
+        return true
+    }
+
+    @JavascriptInterface
+    fun getLibraryStartupHash(libId: String): String {
+        return appPreferences.getLibraryStartupHash(libId).orEmpty()
+    }
+
+    @JavascriptInterface
     fun openServerSelection() {
         emitEvent(ActivityEvent.SelectServer)
     }

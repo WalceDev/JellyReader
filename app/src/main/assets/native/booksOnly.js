@@ -649,100 +649,95 @@
         if (defaultView.startsWith('library:')) {
             const libId = defaultView.replace('library:', '');
 
-            let libName = '';
-            let libServerId = '';
+            // 1. Check if we have a recorded full-view hash for this library
+            let savedHash = '';
             try {
-                let cacheStr = '';
-                if (window.NativeInterface?.getAvailableLibraries) {
-                    cacheStr = window.NativeInterface.getAvailableLibraries();
-                } else if (window.NativeShell?.getAvailableLibraries) {
-                    cacheStr = window.NativeShell.getAvailableLibraries();
+                if (window.NativeInterface?.getLibraryStartupHash) {
+                    savedHash = window.NativeInterface.getLibraryStartupHash(libId);
                 }
-                if (!cacheStr || cacheStr === '[]') {
-                    cacheStr = localStorage.getItem('jellyreader_libraries') || '[]';
-                }
-                const cachedLibs = JSON.parse(cacheStr);
-                const found = cachedLibs.find(l => l.id === libId);
-                if (found) {
-                    libName = found.name;
-                    libServerId = found.serverId || '';
-                }
-            } catch (e) {
-                console.error('[JellyReader] Error reading library cache:', e);
+            } catch (e) {}
+            if (!savedHash) {
+                savedHash = localStorage.getItem('jellyreader_lib_hash_' + libId) || '';
             }
 
-            let targetCard = null;
-
-            // Strategy A: By explicit libId attribute
-            targetCard = document.querySelector(`[data-id="${libId}"], [data-itemid="${libId}"], a[href*="${libId}"]`);
-
-            // Strategy B: By library name match in cards or buttons on home screen (NO .homeSectionsContainer restriction)
-            if (!targetCard && libName) {
-                const targetText = libName.trim().toLowerCase();
-                const cardSelectors = '.MuiCard-root, [class*="MuiCard-root"], .card, .cardBox, .squareCard, [data-type="CollectionFolder"], [data-type="UserView"]';
-                const cardList = Array.from(document.querySelectorAll(cardSelectors)).filter(el => {
-                    return !el.closest('.header, .mainDrawer, aside, [role="menu"], .navMenuOption');
-                });
-
-                targetCard = cardList.find(el => (el.textContent || '').trim().toLowerCase() === targetText);
-                if (!targetCard) {
-                    targetCard = cardList.find(el => (el.textContent || '').toLowerCase().includes(targetText));
-                }
-            }
-
-            // Strategy C: Check drawer items
-            if (!targetCard) {
-                const drawerLinks = Array.from(document.querySelectorAll('.MuiListItemButton-root, [class*="MuiListItem"], .navMenuOption, .mainDrawer a, aside a, [role="menuitem"]'));
-                targetCard = drawerLinks.find(a => {
-                    const hrefMatch = (a.getAttribute('href') || '').includes(libId);
-                    const text = (a.textContent || '').trim().toLowerCase();
-                    const textMatch = libName && (text === libName.toLowerCase() || text.includes(libName.toLowerCase()));
-                    return hrefMatch || textMatch;
-                });
-            }
-
-            // Strategy D: Fallback to first available card on home screen if attempts > 8
-            if (!targetCard && redirectAttempts > 8) {
-                const firstCard = document.querySelector('.MuiCard-root, [class*="MuiCard-root"], .card, .cardBox');
-                if (firstCard && !firstCard.closest('.header, .mainDrawer, aside, [role="menu"]')) {
-                    targetCard = firstCard;
-                }
-            }
-
-            if (targetCard) {
+            if (savedHash) {
                 isRedirecting = true;
-                console.log('[JellyReader] Found library element, triggering action for:', libId, libName);
-                const actionArea = targetCard.querySelector('.MuiCardActionArea-root, .cardActionArea, button, a') || 
-                                   targetCard.querySelector('.cardBox, .cardScalable') || 
-                                   targetCard;
-                triggerAction(actionArea);
-                if (actionArea !== targetCard) {
-                    triggerAction(targetCard);
+                sessionStorage.setItem('jellyreader_startup_done', 'true');
+                console.log('[JellyReader] Starting directly into saved library full view:', savedHash);
+                const targetHash = savedHash.startsWith('#') ? savedHash : ('#' + savedHash);
+                if (window.Emby?.Page?.show) {
+                    const cleanPath = targetHash.replace(/^#!\/?/, '/').replace(/^#\/?/, '/');
+                    window.Emby.Page.show(cleanPath);
+                } else {
+                    window.location.hash = targetHash;
                 }
-
-                // Verify after 700ms if navigation actually succeeded
-                setTimeout(() => {
-                    const currentHash = window.location.hash || '';
-                    const stillHome = currentHash === '' || currentHash === '#' || currentHash === '#/' || currentHash.includes('home.html') || currentHash.includes('#!/home');
-                    if (!stillHome) {
-                        sessionStorage.setItem('jellyreader_startup_done', 'true');
-                        console.log('[JellyReader] Startup navigation confirmed to:', currentHash);
-                    }
-                    isRedirecting = false;
-                }, 700);
+                setTimeout(() => { isRedirecting = false; }, 500);
                 return;
             }
 
-            // Stop trying after ~6 seconds (25 checks) without navigating to list.html - stay on Start as requested
-            if (redirectAttempts > 25) {
+            // 2. If NO hash is recorded yet:
+            // Library hasn't been opened yet to learn its full-view URL.
+            // Mark startup done so app stays safely on Start, and user can tap the library to learn its view.
+            if (redirectAttempts > 2) {
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
-                console.log('[JellyReader] Startup library redirection timeout; remaining on Start as requested.');
+                console.log('[JellyReader] Library has no saved view hash yet. Waiting for first open on Start screen.');
             }
         }
     }
 
-    // Whenever hash changes away from home, mark startup done immediately
+    // Automatic Discovery & Learning of Library Views
+    let lastRegisteredHash = '';
+    function checkAndRegisterCurrentLibrary() {
+        const h = window.location.hash || '';
+        if (!h || h.length < 4 || h === lastRegisteredHash) return;
+        const lowerH = h.toLowerCase();
+        if (lowerH.includes('home') || lowerH.includes('login') || lowerH.includes('selectserver') || lowerH.includes('preferences') || lowerH.includes('dashboard')) {
+            return;
+        }
+
+        let cachedLibs = [];
+        try {
+            const raw = window.NativeInterface?.getAvailableLibraries?.() || localStorage.getItem('jellyreader_libraries') || '[]';
+            cachedLibs = JSON.parse(raw);
+        } catch (e) {}
+
+        if (!cachedLibs || cachedLibs.length === 0) return;
+
+        // 1. Match by explicit library ID in hash (e.g. parentId=..., topParentId=..., id=...)
+        let matchedLib = cachedLibs.find(l => l.id && lowerH.includes(l.id.toLowerCase()));
+
+        // 2. Match by document / header title if not directly in hash
+        if (!matchedLib) {
+            const pageTitle = (document.title || '').trim().toLowerCase();
+            const headerTitle = (document.querySelector('.pageTitle, h1, .headerMiddle')?.textContent || '').trim().toLowerCase();
+            matchedLib = cachedLibs.find(l => {
+                const name = (l.name || '').trim().toLowerCase();
+                return name && (pageTitle.includes(name) || headerTitle.includes(name));
+            });
+        }
+
+        // 3. Fallback: If only 1 book library exists and we are in an items/library browsing view
+        if (!matchedLib && cachedLibs.length === 1 && (lowerH.includes('item') || lowerH.includes('list') || lowerH.includes('library'))) {
+            matchedLib = cachedLibs[0];
+        }
+
+        if (matchedLib && matchedLib.id) {
+            lastRegisteredHash = h;
+            localStorage.setItem('jellyreader_lib_hash_' + matchedLib.id, h);
+            console.log('[JellyReader] Discovered full view hash for library:', matchedLib.name, h);
+            try {
+                if (window.NativeInterface?.registerLibraryView) {
+                    window.NativeInterface.registerLibraryView(matchedLib.id, matchedLib.name || '', h, matchedLib.serverId || '');
+                }
+            } catch (e) {
+                console.error('[JellyReader] Error registering library view:', e);
+            }
+        }
+    }
+
+    // Whenever hash changes away from home, mark startup done immediately and register library view
     window.addEventListener('hashchange', () => {
+        checkAndRegisterCurrentLibrary();
         const h = window.location.hash || '';
         if (h && !h.includes('home') && !h.includes('login') && !h.includes('selectserver')) {
             try {
@@ -755,6 +750,7 @@
         cleanupNavigation();
         applyJellyReaderBranding();
         injectReaderSettingsMenuItem();
+        checkAndRegisterCurrentLibrary();
         checkAndHandleStartupRedirect();
     }
 

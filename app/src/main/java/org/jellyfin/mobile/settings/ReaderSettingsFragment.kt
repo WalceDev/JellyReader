@@ -85,7 +85,9 @@ class ReaderSettingsFragment : Fragment(), BackPressInterceptor {
                     val libObj = jsonArray.getJSONObject(i)
                     val id = libObj.optString("id")
                     val name = libObj.optString("name")
-                    if (id.isNotEmpty() && name.isNotEmpty()) {
+                    val hash = libObj.optString("hash")
+                    val isCurrentlySelected = appPreferences.readerDefaultStartView == "library:$id"
+                    if (id.isNotEmpty() && name.isNotEmpty() && (hash.isNotEmpty() || isCurrentlySelected)) {
                         startViewOptions.add(
                             SelectionItem(
                                 "library:$id",

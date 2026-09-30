@@ -101,6 +101,20 @@ window.NativeShell = {
         return '[]';
     },
 
+    registerLibraryView(id, name, hash, serverId) {
+        if (window.NativeInterface?.registerLibraryView) {
+            return window.NativeInterface.registerLibraryView(id, name, hash, serverId);
+        }
+        return false;
+    },
+
+    getLibraryStartupHash(libId) {
+        if (window.NativeInterface?.getLibraryStartupHash) {
+            return window.NativeInterface.getLibraryStartupHash(libId);
+        }
+        return '';
+    },
+
     selectServer() {
         window.NativeInterface.openServerSelection();
     },
