@@ -337,6 +337,7 @@
 
     // 6. Default Startup View Redirector
     let isRedirecting = false;
+    let redirectAttempts = 0;
     function checkAndHandleStartupRedirect() {
         if (isRedirecting) return;
         if (sessionStorage.getItem('jellyreader_startup_done')) return;
@@ -365,37 +366,112 @@
             return;
         }
 
-        // Wait until navigation router or page is ready
-        if (!window.Emby?.Page?.show && !window.location.hash) {
+        // --- FAVORITES REDIRECT ---
+        if (defaultView === 'favorites') {
+            // 1. Try finding tab button on Home screen
+            const favTab = document.querySelector('.emby-tab-button[data-index="1"], button[data-tab="1"], a[href*="tab=1"]');
+            if (favTab) {
+                isRedirecting = true;
+                sessionStorage.setItem('jellyreader_startup_done', 'true');
+                console.log('[JellyReader] Clicking Favorites tab button');
+                favTab.click();
+                setTimeout(() => { isRedirecting = false; }, 500);
+                return;
+            }
+
+            // 2. Try finding drawer link
+            const favDrawer = Array.from(document.querySelectorAll('.mainDrawer a, .navDrawer a, .navMenuOption, aside a')).find(a => {
+                const t = (a.textContent || '').trim().toLowerCase();
+                return t === 'ulubione' || t === 'favorites';
+            });
+            if (favDrawer) {
+                isRedirecting = true;
+                sessionStorage.setItem('jellyreader_startup_done', 'true');
+                console.log('[JellyReader] Clicking Favorites drawer link');
+                favDrawer.click();
+                setTimeout(() => { isRedirecting = false; }, 500);
+                return;
+            }
+
+            // 3. Fallback: URL route with tab=1 (numeric index for favorites in Jellyfin Web)
+            redirectAttempts++;
+            if (redirectAttempts > 4) {
+                isRedirecting = true;
+                sessionStorage.setItem('jellyreader_startup_done', 'true');
+                console.log('[JellyReader] Navigating to /home.html?tab=1');
+                if (window.Emby?.Page?.show) {
+                    window.Emby.Page.show('/home.html?tab=1');
+                } else {
+                    window.location.hash = '#/home.html?tab=1';
+                }
+                setTimeout(() => { isRedirecting = false; }, 500);
+            }
             return;
         }
 
-        isRedirecting = true;
-        sessionStorage.setItem('jellyreader_startup_done', 'true');
-        console.log('[JellyReader] Startup redirection to:', defaultView);
+        // --- SPECIFIC LIBRARY REDIRECT ---
+        if (defaultView.startsWith('library:')) {
+            const libId = defaultView.replace('library:', '');
 
-        setTimeout(() => {
+            let libName = '';
             try {
-                if (defaultView === 'favorites') {
-                    if (window.Emby?.Page?.show) {
-                        window.Emby.Page.show('/home.html?tab=favorites');
-                    } else {
-                        window.location.hash = '#/home.html?tab=favorites';
-                    }
-                } else if (defaultView.startsWith('library:')) {
-                    const libId = defaultView.replace('library:', '');
-                    if (window.Emby?.Page?.show) {
-                        window.Emby.Page.show('/list.html?parentId=' + encodeURIComponent(libId));
-                    } else {
-                        window.location.hash = '#/list.html?parentId=' + encodeURIComponent(libId);
-                    }
-                }
-            } catch (err) {
-                console.error('[JellyReader] Redirection error:', err);
-            } finally {
-                isRedirecting = false;
+                const cacheStr = localStorage.getItem('jellyreader_libraries') || '[]';
+                const cachedLibs = JSON.parse(cacheStr);
+                const found = cachedLibs.find(l => l.id === libId);
+                if (found) libName = found.name;
+            } catch (e) {}
+
+            // 1. Try finding library card on the Home screen
+            let card = document.querySelector(`.card[data-id="${libId}"], .card[data-itemid="${libId}"], [data-id="${libId}"].card`);
+            if (!card && libName) {
+                const allCards = Array.from(document.querySelectorAll('.card, .cardBox, .cardScalable'));
+                card = allCards.find(c => {
+                    const text = (c.textContent || '').toLowerCase();
+                    return text.includes(libName.toLowerCase());
+                });
             }
-        }, 150);
+
+            if (card) {
+                isRedirecting = true;
+                sessionStorage.setItem('jellyreader_startup_done', 'true');
+                console.log('[JellyReader] Found library card, clicking natively for:', libId, libName);
+                const clickTarget = card.querySelector('.cardBox, .cardScalable, .cardContent, button, a') || card;
+                clickTarget.click();
+                setTimeout(() => { isRedirecting = false; }, 500);
+                return;
+            }
+
+            // 2. Try finding library link in drawer
+            let drawerLink = document.querySelector(`.mainDrawer a[href*="${libId}"], .navMenuOption[href*="${libId}"], aside a[href*="${libId}"]`);
+            if (!drawerLink && libName) {
+                const allLinks = Array.from(document.querySelectorAll('.mainDrawer a, .navDrawer a, .navMenuOption, aside a'));
+                drawerLink = allLinks.find(a => (a.textContent || '').trim().toLowerCase() === libName.toLowerCase());
+            }
+
+            if (drawerLink) {
+                isRedirecting = true;
+                sessionStorage.setItem('jellyreader_startup_done', 'true');
+                console.log('[JellyReader] Found library drawer link, clicking for:', libId);
+                drawerLink.click();
+                setTimeout(() => { isRedirecting = false; }, 500);
+                return;
+            }
+
+            // 3. Fallback: if home sections are rendered, click the first available library card
+            redirectAttempts++;
+            if (redirectAttempts > 6) {
+                const anyCard = document.querySelector('.card, .cardBox');
+                if (anyCard) {
+                    isRedirecting = true;
+                    sessionStorage.setItem('jellyreader_startup_done', 'true');
+                    console.log('[JellyReader] Fallback clicking first available card');
+                    const clickTarget = anyCard.querySelector('.cardBox, .cardScalable, .cardContent, button, a') || anyCard;
+                    clickTarget.click();
+                    setTimeout(() => { isRedirecting = false; }, 500);
+                    return;
+                }
+            }
+        }
     }
 
     function runAllJellyReaderTasks() {
