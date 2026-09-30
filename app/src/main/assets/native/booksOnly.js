@@ -713,10 +713,16 @@
         const params = parseHashParams(lowerH);
         const parentId = params['parentid'] || '';
         const topParentId = params['topparentid'] || '';
+        const folderId = params['folderid'] || '';
         const id = params['id'] || '';
 
         // If parentId exists and doesn't match the library ID, it is a subfolder!
         if (parentId && parentId !== targetId) {
+            return false;
+        }
+
+        // If folderId exists and doesn't match the library ID, it is a subfolder!
+        if (folderId && folderId !== targetId) {
             return false;
         }
 
@@ -726,8 +732,37 @@
         }
 
         // Must explicitly match the library ID
-        return (parentId === targetId || topParentId === targetId || id === targetId);
+        return (parentId === targetId || (topParentId === targetId && !parentId && !folderId && !id) || id === targetId);
     }
+
+    function hasRegisteredRootHash(libId) {
+        let saved = '';
+        try {
+            if (window.NativeInterface?.getLibraryStartupHash) {
+                saved = window.NativeInterface.getLibraryStartupHash(libId);
+            }
+        } catch (e) {}
+        if (!saved) {
+            saved = localStorage.getItem('jellyreader_lib_hash_' + libId) || '';
+        }
+        return Boolean(saved && isRootLibraryView(saved, libId));
+    }
+
+    function isHomeScreen(h) {
+        const lower = (h || '').toLowerCase();
+        return lower === '' || lower === '#' || lower === '#/' || lower.includes('home.html') || lower.includes('#!/home');
+    }
+
+    let previousHash = window.location.hash || '';
+    let isTransitionFromHomeOrDrawer = isHomeScreen(previousHash);
+
+    // Listen for drawer link clicks to allow drawer-based library navigation
+    document.addEventListener('click', (e) => {
+        const drawerLink = e.target.closest?.('.mainDrawer a, .navDrawer a, .navMenuOption, .MuiListItemButton-root, aside a');
+        if (drawerLink) {
+            isTransitionFromHomeOrDrawer = true;
+        }
+    }, true);
 
     // Automatic Discovery & Learning of Library Views
     let lastRegisteredHash = '';
@@ -736,6 +771,11 @@
         if (!h || h.length < 4 || h === lastRegisteredHash) return;
         const lowerH = h.toLowerCase();
         if (lowerH.includes('home') || lowerH.includes('login') || lowerH.includes('selectserver') || lowerH.includes('preferences') || lowerH.includes('dashboard') || lowerH.includes('settings')) {
+            return;
+        }
+
+        // Absolute safeguard: ONLY register if navigation came directly from Home or Navigation Drawer!
+        if (!isTransitionFromHomeOrDrawer) {
             return;
         }
 
@@ -751,7 +791,15 @@
         const matchedLib = cachedLibs.find(l => l.id && isRootLibraryView(h, l.id));
 
         if (matchedLib && matchedLib.id) {
+            // If already registered with a valid root hash, LOCK IT and do not touch!
+            if (hasRegisteredRootHash(matchedLib.id)) {
+                isTransitionFromHomeOrDrawer = false;
+                lastRegisteredHash = h;
+                return;
+            }
+
             lastRegisteredHash = h;
+            isTransitionFromHomeOrDrawer = false;
             localStorage.setItem('jellyreader_lib_hash_' + matchedLib.id, h);
             console.log('[JellyReader] Discovered full root view hash for library:', matchedLib.name, h);
             try {
@@ -766,13 +814,17 @@
 
     // Whenever hash changes away from home, mark startup done immediately and register library view
     window.addEventListener('hashchange', () => {
+        const currentH = window.location.hash || '';
+        if (isHomeScreen(previousHash)) {
+            isTransitionFromHomeOrDrawer = true;
+        }
         checkAndRegisterCurrentLibrary();
-        const h = window.location.hash || '';
-        if (h && !h.includes('home') && !h.includes('login') && !h.includes('selectserver')) {
+        if (currentH && !currentH.includes('home') && !currentH.includes('login') && !currentH.includes('selectserver')) {
             try {
                 sessionStorage.setItem('jellyreader_startup_done', 'true');
             } catch (e) {}
         }
+        previousHash = currentH;
     });
 
     function runAllJellyReaderTasks() {

@@ -200,13 +200,15 @@ class AppPreferences(context: Context) {
         }
         val parentId = params["parentid"]
         val topParentId = params["topparentid"]
+        val folderId = params["folderid"]
         val id = params["id"]
         val targetId = libId.lowercase()
 
         if (!parentId.isNullOrEmpty() && parentId != targetId) return false
+        if (!folderId.isNullOrEmpty() && folderId != targetId) return false
         if (!id.isNullOrEmpty() && id != targetId) return false
 
-        return (parentId == targetId || topParentId == targetId || id == targetId)
+        return (parentId == targetId || (topParentId == targetId && parentId.isNullOrEmpty() && folderId.isNullOrEmpty() && id.isNullOrEmpty()) || id == targetId)
     }
 
     fun saveDiscoveredLibrary(id: String, name: String, hash: String, serverId: String) {
