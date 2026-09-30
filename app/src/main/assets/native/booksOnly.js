@@ -685,13 +685,57 @@
         }
     }
 
+    function parseHashParams(hash) {
+        const qIndex = hash.indexOf('?');
+        if (qIndex === -1) return {};
+        const q = hash.substring(qIndex + 1);
+        const params = {};
+        q.split('&').forEach(part => {
+            const eq = part.indexOf('=');
+            if (eq !== -1) {
+                const k = decodeURIComponent(part.substring(0, eq)).toLowerCase();
+                const v = decodeURIComponent(part.substring(eq + 1)).toLowerCase();
+                params[k] = v;
+            }
+        });
+        return params;
+    }
+
+    function isRootLibraryView(hash, libId) {
+        if (!hash || !libId) return false;
+        const lowerH = hash.toLowerCase();
+        // Ignore details or media player pages
+        if (lowerH.includes('itemdetails') || lowerH.includes('details.html') || lowerH.includes('bookplayer') || lowerH.includes('view=item')) {
+            return false;
+        }
+
+        const targetId = libId.toLowerCase();
+        const params = parseHashParams(lowerH);
+        const parentId = params['parentid'] || '';
+        const topParentId = params['topparentid'] || '';
+        const id = params['id'] || '';
+
+        // If parentId exists and doesn't match the library ID, it is a subfolder!
+        if (parentId && parentId !== targetId) {
+            return false;
+        }
+
+        // If id exists and doesn't match the library ID, it is a child item!
+        if (id && id !== targetId) {
+            return false;
+        }
+
+        // Must explicitly match the library ID
+        return (parentId === targetId || topParentId === targetId || id === targetId);
+    }
+
     // Automatic Discovery & Learning of Library Views
     let lastRegisteredHash = '';
     function checkAndRegisterCurrentLibrary() {
         const h = window.location.hash || '';
         if (!h || h.length < 4 || h === lastRegisteredHash) return;
         const lowerH = h.toLowerCase();
-        if (lowerH.includes('home') || lowerH.includes('login') || lowerH.includes('selectserver') || lowerH.includes('preferences') || lowerH.includes('dashboard')) {
+        if (lowerH.includes('home') || lowerH.includes('login') || lowerH.includes('selectserver') || lowerH.includes('preferences') || lowerH.includes('dashboard') || lowerH.includes('settings')) {
             return;
         }
 
@@ -703,28 +747,13 @@
 
         if (!cachedLibs || cachedLibs.length === 0) return;
 
-        // 1. Match by explicit library ID in hash (e.g. parentId=..., topParentId=..., id=...)
-        let matchedLib = cachedLibs.find(l => l.id && lowerH.includes(l.id.toLowerCase()));
-
-        // 2. Match by document / header title if not directly in hash
-        if (!matchedLib) {
-            const pageTitle = (document.title || '').trim().toLowerCase();
-            const headerTitle = (document.querySelector('.pageTitle, h1, .headerMiddle')?.textContent || '').trim().toLowerCase();
-            matchedLib = cachedLibs.find(l => {
-                const name = (l.name || '').trim().toLowerCase();
-                return name && (pageTitle.includes(name) || headerTitle.includes(name));
-            });
-        }
-
-        // 3. Fallback: If only 1 book library exists and we are in an items/library browsing view
-        if (!matchedLib && cachedLibs.length === 1 && (lowerH.includes('item') || lowerH.includes('list') || lowerH.includes('library'))) {
-            matchedLib = cachedLibs[0];
-        }
+        // Match strictly by explicit ROOT library view (subfolders are rejected)
+        const matchedLib = cachedLibs.find(l => l.id && isRootLibraryView(h, l.id));
 
         if (matchedLib && matchedLib.id) {
             lastRegisteredHash = h;
             localStorage.setItem('jellyreader_lib_hash_' + matchedLib.id, h);
-            console.log('[JellyReader] Discovered full view hash for library:', matchedLib.name, h);
+            console.log('[JellyReader] Discovered full root view hash for library:', matchedLib.name, h);
             try {
                 if (window.NativeInterface?.registerLibraryView) {
                     window.NativeInterface.registerLibraryView(matchedLib.id, matchedLib.name || '', h, matchedLib.serverId || '');

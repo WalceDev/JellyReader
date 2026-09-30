@@ -198,6 +198,7 @@ class NativeInterface(private val context: Context) : KoinComponent {
     @JavascriptInterface
     fun registerLibraryView(id: String, name: String, hash: String, serverId: String): Boolean {
         if (id.isBlank() || hash.isBlank()) return false
+        if (!appPreferences.isRootLibraryHash(id, hash)) return false
         val alreadyKnown = appPreferences.getLibraryStartupHash(id) == hash
         appPreferences.saveDiscoveredLibrary(id, name, hash, serverId)
         if (!alreadyKnown) {

@@ -186,8 +186,32 @@ class AppPreferences(context: Context) {
         } catch (_: Exception) {}
     }
 
+    fun isRootLibraryHash(libId: String, hash: String): Boolean {
+        if (hash.isBlank() || libId.isBlank()) return false
+        val lower = hash.lowercase()
+        if (lower.contains("itemdetails") || lower.contains("details.html") || lower.contains("bookplayer") || lower.contains("view=item")) {
+            return false
+        }
+        val query = lower.substringAfter('?', "")
+        if (query.isEmpty()) return true
+        val params = query.split('&').associate {
+            val parts = it.split('=')
+            parts[0].lowercase() to (parts.getOrNull(1)?.lowercase() ?: "")
+        }
+        val parentId = params["parentid"]
+        val topParentId = params["topparentid"]
+        val id = params["id"]
+        val targetId = libId.lowercase()
+
+        if (!parentId.isNullOrEmpty() && parentId != targetId) return false
+        if (!id.isNullOrEmpty() && id != targetId) return false
+
+        return (parentId == targetId || topParentId == targetId || id == targetId)
+    }
+
     fun saveDiscoveredLibrary(id: String, name: String, hash: String, serverId: String) {
         if (id.isBlank() || hash.isBlank()) return
+        if (!isRootLibraryHash(id, hash)) return
         try {
             val jsonArray = if (readerLibrariesCache.isNotEmpty() && readerLibrariesCache != "[]") {
                 JSONArray(readerLibrariesCache)
