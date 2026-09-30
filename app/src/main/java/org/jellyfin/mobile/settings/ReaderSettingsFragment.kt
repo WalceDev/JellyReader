@@ -8,6 +8,7 @@ import androidx.fragment.app.Fragment
 import de.Maxr1998.modernpreferences.Preference
 import de.Maxr1998.modernpreferences.PreferencesAdapter
 import de.Maxr1998.modernpreferences.helpers.categoryHeader
+import de.Maxr1998.modernpreferences.helpers.pref
 import de.Maxr1998.modernpreferences.helpers.screen
 import de.Maxr1998.modernpreferences.helpers.singleChoice
 import de.Maxr1998.modernpreferences.preferences.choice.SelectionItem
@@ -106,6 +107,12 @@ class ReaderSettingsFragment : Fragment(), BackPressInterceptor {
             titleRes = R.string.pref_reader_default_start_view_title
             summaryRes = R.string.pref_reader_default_start_view_summary
             initialSelection = appPreferences.readerDefaultStartView
+        }
+
+        pref("pref_reader_startup_hint") {
+            titleRes = R.string.pref_reader_startup_hint_title
+            summaryRes = R.string.pref_reader_startup_hint_summary
+            iconRes = R.drawable.ic_info_white_24dp
         }
     }
 }

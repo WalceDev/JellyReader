@@ -141,7 +141,48 @@ class AppPreferences(context: Context) {
 
     var readerLibrariesCache: String
         get() = sharedPreferences.getString(Constants.PREF_READER_LIBRARIES_CACHE, "[]") ?: "[]"
-        set(value) = sharedPreferences.edit { putString(Constants.PREF_READER_LIBRARIES_CACHE, value) }
+    fun updateAvailableLibraries(librariesJson: String) {
+        if (librariesJson.isBlank() || librariesJson == "[]") return
+        try {
+            val incoming = JSONArray(librariesJson)
+            val current = if (readerLibrariesCache.isNotEmpty() && readerLibrariesCache != "[]") {
+                JSONArray(readerLibrariesCache)
+            } else {
+                JSONArray()
+            }
+
+            val map = linkedMapOf<String, JSONObject>()
+            for (i in 0 until current.length()) {
+                val obj = current.getJSONObject(i)
+                val id = obj.optString("id")
+                if (id.isNotEmpty()) {
+                    map[id] = obj
+                }
+            }
+
+            for (i in 0 until incoming.length()) {
+                val inObj = incoming.getJSONObject(i)
+                val id = inObj.optString("id")
+                if (id.isNotEmpty()) {
+                    val existing = map[id]
+                    if (existing != null) {
+                        val name = inObj.optString("name")
+                        val serverId = inObj.optString("serverId")
+                        if (name.isNotEmpty()) existing.put("name", name)
+                        if (serverId.isNotEmpty()) existing.put("serverId", serverId)
+                    } else {
+                        map[id] = inObj
+                    }
+                }
+            }
+
+            val result = JSONArray()
+            for (obj in map.values) {
+                result.put(obj)
+            }
+            readerLibrariesCache = result.toString()
+        } catch (_: Exception) {}
+    }
 
     fun saveDiscoveredLibrary(id: String, name: String, hash: String, serverId: String) {
         if (id.isBlank() || hash.isBlank()) return

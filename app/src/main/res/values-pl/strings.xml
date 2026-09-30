@@ -185,4 +185,6 @@
     <string name="pref_start_view_favorites_summary">Otwórz ulubione książki</string>
     <string name="pref_start_view_library_summary">Otwórz bibliotekę: %1$s</string>
     <string name="toast_library_registered">Zarejestrowano widok startowy dla: %1$s</string>
+    <string name="pref_reader_startup_hint_title">Informacja</string>
+    <string name="pref_reader_startup_hint_summary">Biblioteka pojawi się tutaj do wyboru po jej pierwszym otwarciu w aplikacji.</string>
 </resources>

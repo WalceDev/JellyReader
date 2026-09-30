@@ -187,7 +187,7 @@ class NativeInterface(private val context: Context) : KoinComponent {
 
     @JavascriptInterface
     fun saveAvailableLibraries(librariesJson: String) {
-        appPreferences.readerLibrariesCache = librariesJson
+        appPreferences.updateAvailableLibraries(librariesJson)
     }
 
     @JavascriptInterface

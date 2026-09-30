@@ -189,4 +189,6 @@
     <string name="pref_start_view_favorites_summary">Open your favorite books</string>
     <string name="pref_start_view_library_summary">Open library: %1$s</string>
     <string name="toast_library_registered">Registered startup view for \"%1$s\"</string>
+    <string name="pref_reader_startup_hint_title">Information</string>
+    <string name="pref_reader_startup_hint_summary">A library appears here for selection after opening it for the first time in the app.</string>
 </resources>
