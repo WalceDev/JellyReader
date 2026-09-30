@@ -141,6 +141,8 @@ class AppPreferences(context: Context) {
 
     var readerLibrariesCache: String
         get() = sharedPreferences.getString(Constants.PREF_READER_LIBRARIES_CACHE, "[]") ?: "[]"
+        set(value) = sharedPreferences.edit { putString(Constants.PREF_READER_LIBRARIES_CACHE, value) }
+
     fun updateAvailableLibraries(librariesJson: String) {
         if (librariesJson.isBlank() || librariesJson == "[]") return
         try {
